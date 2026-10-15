@@ -71,6 +71,91 @@ try:
 except ImportError:
     HAS_PYPERCLIP = False
 
+
+def get_clipboard_text() -> str:
+    """Universal clipboard reader: uses pyperclip if available, else native Windows ctypes, else powershell"""
+    if HAS_PYPERCLIP:
+        try:
+            val = pyperclip.paste()
+            if val and isinstance(val, str):
+                return val
+        except Exception:
+            pass
+    if os.name == "nt":
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+            user32.OpenClipboard.restype = ctypes.c_bool
+            user32.CloseClipboard.argtypes = []
+            user32.CloseClipboard.restype = ctypes.c_bool
+            user32.GetClipboardData.argtypes = [ctypes.c_uint]
+            user32.GetClipboardData.restype = ctypes.c_void_p
+            kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalUnlock.restype = ctypes.c_bool
+
+            if user32.OpenClipboard(None):
+                try:
+                    CF_UNICODETEXT = 13
+                    handle = user32.GetClipboardData(CF_UNICODETEXT)
+                    if handle:
+                        ptr = kernel32.GlobalLock(handle)
+                        if ptr:
+                            try:
+                                return ctypes.c_wchar_p(ptr).value or ""
+                            finally:
+                                kernel32.GlobalUnlock(handle)
+                finally:
+                    user32.CloseClipboard()
+        except Exception:
+            pass
+        try:
+            res = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+                text=True, stderr=subprocess.DEVNULL, timeout=1
+            )
+            return res.strip()
+        except Exception:
+            pass
+    return ""
+
+
+def set_clipboard_text(text: str) -> bool:
+    """Universal clipboard writer: uses pyperclip if available, else native Windows ctypes"""
+    if HAS_PYPERCLIP:
+        try:
+            pyperclip.copy(text)
+            return True
+        except Exception:
+            pass
+    if os.name == "nt":
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            GMEM_MOVEABLE = 0x0002
+            CF_UNICODETEXT = 13
+            if user32.OpenClipboard(None):
+                try:
+                    user32.EmptyClipboard()
+                    data = text.encode("utf-16-le") + b"\x00\x00"
+                    h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+                    if h_mem:
+                        ptr = kernel32.GlobalLock(h_mem)
+                        if ptr:
+                            try:
+                                ctypes.memmove(ptr, data, len(data))
+                            finally:
+                                kernel32.GlobalUnlock(h_mem)
+                            user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+                            return True
+                finally:
+                    user32.CloseClipboard()
+        except Exception:
+            pass
+    return False
+
 # Paths configuration
 BASE_DIR = Path(__file__).resolve().parent
 YTDLP_EXE = BASE_DIR / "yt-dlp.exe"
@@ -1397,23 +1482,20 @@ def execute_download(job):
 
 def clipboard_watcher_thread():
     """Background thread that monitors system clipboard"""
-    if not HAS_PYPERCLIP:
-        return
-
     last_text = ""
     try:
-        last_text = pyperclip.paste().strip()
+        last_text = get_clipboard_text().strip()
     except Exception:
         pass
 
     while not STATE.stop_requested:
-        time.sleep(0.5)
+        time.sleep(0.4)
         clip_mode = STATE.config.get("clipboard_mode", "auto")
         if clip_mode == "off":
             continue
 
         try:
-            current_text = pyperclip.paste()
+            current_text = get_clipboard_text()
         except Exception:
             continue
 
@@ -2140,51 +2222,170 @@ def get_nonblocking_line(prompt: str) -> str:
 
         # Check for user keyboard input
         if HAS_MSVCRT and sys.stdin.isatty():
-            ch = msvcrt.getwch()
+            if msvcrt.kbhit():
+                ch = msvcrt.getwch()
 
-            if ch in ("\r", "\n"):
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return "".join(line_buffer)
+                if ch in ("\r", "\n"):
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    return "".join(line_buffer)
 
-            elif ch == "\x08":  # Backspace
-                if line_buffer:
-                    line_buffer.pop()
-                    sys.stdout.write("\b \b")
+                elif ch == "\x08":  # Backspace
+                    if line_buffer:
+                        line_buffer.pop()
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+
+                elif ch == "\x03":  # Ctrl+C
+                    print(f"\n{Fore.YELLOW}Cancelled line.{Style.RESET_ALL}")
+                    return ""
+
+                elif ch == "\x16":  # Ctrl+V
+                    pasted = get_clipboard_text()
+                    for c in pasted:
+                        if c not in ("\r", "\n"):
+                            line_buffer.append(c)
+                            sys.stdout.write(c)
                     sys.stdout.flush()
 
-            elif ch == "\x03":  # Ctrl+C
-                print(f"\n{Fore.YELLOW}Cancelled line.{Style.RESET_ALL}")
-                return ""
+                elif ch in ("\x00", "\xe0"):  # Special keys prefix
+                    if msvcrt.kbhit():
+                        msvcrt.getwch()
 
-            elif ch == "\x16":  # Ctrl+V
-                if HAS_PYPERCLIP:
-                    try:
-                        pasted = pyperclip.paste()
-                        for c in pasted:
-                            if c not in ("\r", "\n"):
-                                line_buffer.append(c)
-                                sys.stdout.write(c)
-                        sys.stdout.flush()
-                    except Exception:
-                        pass
-
-            elif ch in ("\x00", "\xe0"):  # Special keys prefix
-                msvcrt.getwch()
-
-            elif ord(ch) >= 32:  # Printable character
-                line_buffer.append(ch)
-                sys.stdout.write(ch)
-                sys.stdout.flush()
+                elif ord(ch) >= 32:  # Printable character
+                    line_buffer.append(ch)
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+            else:
+                time.sleep(0.04)
         else:
-            time.sleep(0.03)
+            time.sleep(0.04)
 
     return "".join(line_buffer)
+
+
+class TerminalLineReader:
+    """Background stdin reader for non-TTY or piped terminals (VS Code, PyCharm, Git Bash)"""
+    def __init__(self):
+        self.input_queue = collections.deque()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while not STATE.stop_requested:
+            try:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                self.input_queue.append(line.rstrip("\r\n"))
+            except Exception:
+                break
+
+
+def get_fallback_line(prompt: str, reader: TerminalLineReader) -> str:
+    """Non-blocking line reader for non-TTY/IDE terminals that continuously processes the download queue"""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    while not STATE.stop_requested:
+        with STATE.lock:
+            has_job = bool(STATE.download_queue)
+            pending_prompt = STATE.pending_prompt_url
+            pending_ref = getattr(STATE, "pending_prompt_ref", None)
+            if pending_prompt:
+                STATE.pending_prompt_url = None
+                STATE.pending_prompt_ref = None
+
+        if pending_prompt:
+            sys.stdout.write("\n")
+            print(f"{Fore.LIGHTYELLOW_EX}[?] Clipboard detected link:{Style.RESET_ALL} {Fore.CYAN}{pending_prompt}{Style.RESET_ALL}")
+            if is_spotify_url(pending_prompt):
+                enqueue_spotify_download(pending_prompt)
+            else:
+                STATE.enqueue_job({
+                    "url": pending_prompt,
+                    "referer": pending_ref,
+                    "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+                })
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+            continue
+
+        if has_job:
+            with STATE.lock:
+                job = STATE.download_queue.popleft()
+                STATE.is_downloading = True
+
+            if job.get("needs_quality_prompt", False):
+                chosen_preset, custom_fmt = prompt_video_quality(job["url"], referer=job.get("referer"))
+                if chosen_preset is None and custom_fmt is None:
+                    with STATE.lock:
+                        STATE.is_downloading = False
+                    sys.stdout.write(prompt)
+                    sys.stdout.flush()
+                    continue
+                job["preset_override"] = chosen_preset
+                job["custom_format_str"] = custom_fmt
+
+            execute_download(job)
+
+            with STATE.lock:
+                STATE.is_downloading = False
+
+            sys.stdout.write(prompt)
+            sys.stdout.flush()
+            continue
+
+        if reader.input_queue:
+            return reader.input_queue.popleft()
+
+        time.sleep(0.04)
+
+    return ""
+
+
+def bootstrap_workstation_environment():
+    """Auto-detects missing core dependencies and bootstraps them so the workstation runs smoothly"""
+    missing_pkgs = []
+    try:
+        import colorama
+    except ImportError:
+        missing_pkgs.append("colorama")
+    try:
+        import pyperclip
+    except ImportError:
+        missing_pkgs.append("pyperclip")
+
+    if missing_pkgs:
+        try:
+            print(f"[*] Installing recommended Python libraries: {', '.join(missing_pkgs)}...")
+            subprocess.run([sys.executable, "-m", "pip", "install", *missing_pkgs, "--quiet"], check=False)
+        except Exception:
+            pass
+
+    has_ytdlp = YTDLP_EXE.exists() or shutil.which("yt-dlp")
+    if not has_ytdlp:
+        print("[*] yt-dlp binary not found. Downloading latest official yt-dlp.exe from GitHub...")
+        try:
+            import urllib.request
+            url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+            urllib.request.urlretrieve(url, str(YTDLP_EXE))
+            print("[✓] yt-dlp.exe downloaded successfully.")
+        except Exception as e:
+            print(f"[!] Note: yt-dlp.exe could not be auto-downloaded: {e}")
+            print("    Please run setup.bat or install yt-dlp manually.")
+
+    has_ffmpeg = FFMPEG_EXE.exists() or shutil.which("ffmpeg")
+    if not has_ffmpeg:
+        print("[!] Note: FFmpeg is not detected in this folder or in system PATH.")
+        print("    Run 'setup.bat' to auto-download and install FFmpeg.")
 
 
 def main():
     if os.name == "nt":
         os.system("title YT-DLP Supercharged Downloader Workstation")
+
+    # Ensure required dependencies & binaries exist
+    bootstrap_workstation_environment()
 
     print_banner()
 
@@ -2200,16 +2401,16 @@ def main():
 
     # Main interactive loop
     prompt = f"{Fore.CYAN}>>> {Style.RESET_ALL}"
+    fallback_reader = None
+    if not (HAS_MSVCRT and sys.stdin.isatty()):
+        fallback_reader = TerminalLineReader()
+
     try:
         while not STATE.stop_requested:
             if HAS_MSVCRT and sys.stdin.isatty():
                 line = get_nonblocking_line(prompt)
             else:
-                sys.stdout.write(prompt)
-                sys.stdout.flush()
-                line = sys.stdin.readline()
-                if not line:
-                    break
+                line = get_fallback_line(prompt, fallback_reader)
 
             handle_user_command(line)
     except (KeyboardInterrupt, EOFError):
