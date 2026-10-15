@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Local personal user data & history (do NOT commit to git)
+config.json
+history.json
+downloads/
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.mp3
+*.m4a
+*.wav
+*.flac
+*.opus
+*.jpg
+*.png
+*.webp
+*.part
+*.part*
+*-Frag*
+*.ytdl
+
+# Windows / OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large Precompiled Binaries (>100MB fails GitHub push; use setup.bat to download)
+*.exe
+yt-dlp.exe
+ffmpeg.exe
+ffplay.exe
+ffprobe.exe
+aria2c.exe

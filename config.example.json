@@ -1,0 +1,14 @@
+{
+    "clipboard_mode": "auto",
+    "ask_quality_each_time": true,
+    "default_stream_referer": "https://movy.sx/",
+    "preset": 1,
+    "download_dir": "downloads",
+    "sound_effects": true,
+    "desktop_notifications": true,
+    "browser_cookies": "none",
+    "subtitles_mode": "off",
+    "speed_limit": "none",
+    "sponsorblock": false,
+    "media_filter_only": true
+}
