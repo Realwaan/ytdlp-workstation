@@ -74,6 +74,7 @@ if !HAS_FFMPEG! equ 0 (
         "Get-ChildItem -Path 'ffmpeg-temp' -Recurse -Filter '*.exe' | Move-Item -Destination . -Force;" ^
         "Remove-Item -Path 'ffmpeg-temp' -Recurse -Force;" ^
         "Remove-Item -Path $zip -Force;"
+    if exist "ffplay.exe" del /f /q "ffplay.exe" >nul 2>&1
     if exist "ffmpeg.exe" (
         echo [✓] FFmpeg installed successfully.
     ) else (
