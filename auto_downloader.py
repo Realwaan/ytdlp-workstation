@@ -29,10 +29,35 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-# Add BASE_DIR to system PATH so ffmpeg and ffprobe are always found globally
-if str(BASE_DIR) not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = str(BASE_DIR) + os.pathsep + os.environ.get("PATH", "")
+MODULE_DIR = Path(__file__).resolve().parent
+
+def _detect_portable_mode() -> bool:
+    try:
+        if (MODULE_DIR / "setup.bat").exists() or (MODULE_DIR / "run.bat").exists():
+            test_file = MODULE_DIR / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return True
+    except (PermissionError, OSError):
+        pass
+    return False
+
+IS_PORTABLE = _detect_portable_mode()
+
+if IS_PORTABLE:
+    BASE_DIR = MODULE_DIR
+    USER_DATA_DIR = MODULE_DIR
+    DEFAULT_DOWNLOAD_DIR = MODULE_DIR / "downloads"
+else:
+    USER_DATA_DIR = Path.home() / ".ytdlp-workstation"
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    BASE_DIR = USER_DATA_DIR
+    DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads" / "YT-DLP"
+
+# Add directories to system PATH so ffmpeg and yt-dlp are always found globally
+for _p in [str(BASE_DIR), str(MODULE_DIR)]:
+    if _p not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
 
 # Force UTF-8 encoding on standard streams to avoid Windows charmap errors
 os.environ["PYTHONIOENCODING"] = "utf-8"
@@ -157,16 +182,14 @@ def set_clipboard_text(text: str) -> bool:
     return False
 
 # Paths configuration
-BASE_DIR = Path(__file__).resolve().parent
 YTDLP_EXE = BASE_DIR / "yt-dlp.exe"
 FFMPEG_EXE = BASE_DIR / "ffmpeg.exe"
 ARIA2C_EXE = BASE_DIR / "aria2c.exe"
-CONFIG_FILE = BASE_DIR / "config.json"
-HISTORY_FILE = BASE_DIR / "history.json"
-DEFAULT_DOWNLOAD_DIR = BASE_DIR / "downloads"
+CONFIG_FILE = USER_DATA_DIR / "config.json"
+HISTORY_FILE = USER_DATA_DIR / "history.json"
 
 # Ensure download dir exists
-DEFAULT_DOWNLOAD_DIR.mkdir(exist_ok=True)
+DEFAULT_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Presets definition with full video & audio spectrum
 PRESETS = {
@@ -1012,9 +1035,10 @@ def inspect_and_pick_formats(url: str, referer: str = None):
     print(f"\n{Fore.CYAN}[*] Fetching available formats from video...{Style.RESET_ALL}\n")
     cmd = [
         str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
-        "--ffmpeg-location", str(BASE_DIR),
         "--no-warnings"
     ]
+    if FFMPEG_EXE.exists():
+        cmd.extend(["--ffmpeg-location", str(FFMPEG_EXE.parent)])
     if shutil.which("node"):
         cmd.extend(["--js-runtimes", "node"])
     if STATE.config.get("browser_cookies", "none") != "none":
@@ -1148,7 +1172,6 @@ def build_ytdlp_command(job_or_url, **kwargs):
 
     cmd = [
         str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
-        "--ffmpeg-location", str(BASE_DIR),
         "--windows-filenames",
         "--no-mtime",
         "--no-part",                   # Crucial: direct write eliminates [WinError 32] file locking collisions
@@ -1167,6 +1190,9 @@ def build_ytdlp_command(job_or_url, **kwargs):
         "--progress-template",
         "download:PROGRESS|P=%(progress._percent_str)s|D=%(progress._downloaded_bytes_str)s|T=%(progress._total_bytes_str,progress._total_bytes_estimate_str)s|S=%(progress._speed_str)s|E=%(progress._eta_str)s|F=%(progress.fragment_index)s/%(progress.fragment_count)s"
     ]
+
+    if FFMPEG_EXE.exists():
+        cmd.extend(["--ffmpeg-location", str(FFMPEG_EXE.parent)])
 
     # Aria2c turbo downloader for direct HTTP/HTTPS connections (16 concurrent streams)
     if ARIA2C_EXE.exists():

@@ -11,37 +11,39 @@ Whenever you copy a video link from YouTube, TikTok, Instagram, Twitter/X, Reddi
 
 ---
 
-## 📦 Installation & Setup
+## 📦 Installation & Quick Start
 
-### Option A: 1-Click Automated Setup (Zero Prerequisites)
-If you just cloned or downloaded this repository on any Windows 10/11 PC:
-1. Simply double-click **`run.bat`** (or **`setup.bat`**).
-2. The setup wizard automatically:
-   - **Auto-downloads & installs Python 3.12** if you don't have Python installed yet
-   - Installs required Python dependencies (`colorama`, `pyperclip`)
-   - Downloads the latest official **`yt-dlp.exe`** from GitHub
-   - Downloads and extracts **`ffmpeg.exe`** and **`ffprobe.exe`** (and prunes unused `ffplay.exe`)
-   - Initializes `config.json` and creates your `downloads/` folder
-3. Double-click **`create_desktop_shortcut.bat`** to pin a shortcut on your Desktop!
-
-### Option B: Manual Setup (Developers)
-```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/ytdlp-workstation.git
-cd ytdlp-workstation
-
-# 2. Install Python requirements
-pip install -r requirements.txt
-
-# 3. Create your local config
-copy config.example.json config.json
-
-# 4. Binaries:
-# Place yt-dlp.exe and ffmpeg.exe in the repository folder, or ensure they are in your system PATH.
-
-# 5. Launch the workstation
-python auto_downloader.py
+### ⚡ Option 1: 1-Line PowerShell Web Installer (Fastest for Windows)
+Open PowerShell and run this single command to install and set up your Desktop shortcut automatically:
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Realwaan/ytdlp-workstation/main/install.ps1 | iex"
 ```
+
+---
+
+### 🐍 Option 2: Install as a Python Package (`pip`)
+You can install and run the workstation globally from any terminal using `pip`:
+```bash
+pip install git+https://github.com/Realwaan/ytdlp-workstation.git
+```
+*(Or via PyPI: `pip install ytdlp-workstation`)*
+
+Once installed, launch it anytime from any directory:
+```bash
+ytdlp-workstation
+```
+*(Or: `python -m ytdlp_workstation`)*
+
+---
+
+### 💻 Option 3: Portable Clone & Run (Zero Installation)
+If you prefer running it portably from a dedicated folder:
+1. Clone or download this repo.
+2. Double-click **`run.bat`** (or **`setup.bat`**).
+   - Auto-checks and installs Python if needed
+   - Downloads official `yt-dlp.exe` and `ffmpeg.exe`
+   - Initializes local `downloads/` folder
+3. Double-click **`create_desktop_shortcut.bat`** to pin a shortcut to your Desktop!
 
 ---
 

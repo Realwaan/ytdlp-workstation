@@ -50,3 +50,8 @@ ffmpeg.exe
 ffplay.exe
 ffprobe.exe
 aria2c.exe
+
+# Packaging & Distribution artifacts
+build/
+dist/
+*.egg-info/
