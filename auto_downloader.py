@@ -548,6 +548,18 @@ def cleanup_orphaned_fragments(directory: Path = None):
         pass
 
 
+def get_free_disk_space_gb(directory: Path = None) -> float:
+    """Return free disk space in Gigabytes for the download directory"""
+    target = Path(directory or STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    try:
+        if not target.exists():
+            target.mkdir(parents=True, exist_ok=True)
+        usage = shutil.disk_usage(target)
+        return round(usage.free / (1024 ** 3), 1)
+    except Exception:
+        return -1.0
+
+
 def is_spotify_url(url: str) -> bool:
     """Check if URL points to a Spotify track, album, playlist, or shortlink"""
     if not url or not isinstance(url, str):
@@ -895,7 +907,18 @@ def print_banner():
     speed_limit = STATE.config.get("speed_limit", "none").upper()
     speed_badge = f"{Fore.YELLOW}{speed_limit}{Style.RESET_ALL}" if speed_limit != "NONE" else f"{Fore.LIGHTBLACK_EX}UNLIMITED{Style.RESET_ALL}"
 
+    sb_mode = STATE.config.get("sponsorblock", False)
+    sb_badge = f"{Fore.GREEN}ON{Style.RESET_ALL}" if sb_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
+
     download_folder = Path(STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    free_gb = get_free_disk_space_gb(download_folder)
+    if free_gb >= 10.0:
+        disk_badge = f"{Fore.GREEN}{free_gb} GB Free{Style.RESET_ALL}"
+    elif free_gb >= 0.0:
+        disk_badge = f"{Fore.RED}⚠️ LOW: {free_gb} GB Free{Style.RESET_ALL}"
+    else:
+        disk_badge = f"{Fore.LIGHTBLACK_EX}Available{Style.RESET_ALL}"
+
     engine_badge = f"{Back.CYAN}{Fore.BLACK} 16x GIGABIT TURBO (ARIA2C + NATIVE MULTI-STREAM) {Style.RESET_ALL}" if ARIA2C_EXE.exists() else f"{Back.GREEN}{Fore.BLACK} 16-CONCURRENT STREAMS {Style.RESET_ALL}"
     active_site = getattr(STATE, "last_seen_website", None) or STATE.config.get("default_stream_referer", "https://movy.sx/")
 
@@ -913,8 +936,8 @@ def print_banner():
   {Fore.WHITE}[●] STREAMING DETECTOR :{Style.RESET_ALL} {Fore.GREEN}{active_site}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}(Auto-attaches referer){Style.RESET_ALL}
   {Fore.WHITE}[●] QUALITY MODE       :{Style.RESET_ALL} {quality_badge}
   {Fore.WHITE}[●] BROWSER COOKIES    :{Style.RESET_ALL} {cookies_badge} (Bypasses login & age walls)
-  {Fore.WHITE}[●] SUBTITLES          :{Style.RESET_ALL} {subs_badge} | {Fore.WHITE}SPEED LIMIT:{Style.RESET_ALL} {speed_badge}
-  {Fore.WHITE}[●] SAVE DIRECTORY     :{Style.RESET_ALL} {Fore.CYAN}{download_folder}{Style.RESET_ALL}
+  {Fore.WHITE}[●] SUBTITLES          :{Style.RESET_ALL} {subs_badge} | {Fore.WHITE}SPEED LIMIT:{Style.RESET_ALL} {speed_badge} | {Fore.WHITE}SPONSORBLOCK:{Style.RESET_ALL} {sb_badge}
+  {Fore.WHITE}[●] SAVE DIRECTORY     :{Style.RESET_ALL} {Fore.CYAN}{download_folder}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}({disk_badge}{Fore.LIGHTBLACK_EX}){Style.RESET_ALL}
 {Fore.LIGHTBLACK_EX}══════════════════════════════════════════════════════════════════════{Style.RESET_ALL}
   {Style.BRIGHT}{Fore.LIGHTWHITE_EX}HOW TO DOWNLOAD:{Style.RESET_ALL}
   {Fore.LIGHTGREEN_EX}▶ Just COPY any video OR Spotify link in your browser!{Style.RESET_ALL}
@@ -922,6 +945,9 @@ def print_banner():
   {Fore.LIGHTBLACK_EX}──────────────────────────────────────────────────────────────────{Style.RESET_ALL}
   {Fore.LIGHTYELLOW_EX}POWER COMMANDS:{Style.RESET_ALL}
   {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Paste URL directly to download
+  {Fore.CYAN}play <song/video>{Style.RESET_ALL}       : Search YouTube & instant download as 320k MP3
+  {Fore.CYAN}yt <query>{Style.RESET_ALL}                 : Search YouTube and pick from top 5 results
+  {Fore.CYAN}info [URL]{Style.RESET_ALL}                 : Inspect video details, max resolution, audio & subs
   {Fore.CYAN}spotify [URL]{Style.RESET_ALL}           : Download Spotify track, album, or playlist (320kbps MP3)
   {Fore.CYAN}site <name/url>{Style.RESET_ALL}         : Switch active streaming site (e.g. {Fore.YELLOW}site cinejoy{Style.RESET_ALL} or {Fore.YELLOW}site movy{Style.RESET_ALL})
   {Fore.CYAN}trim <start>-<end> [URL]{Style.RESET_ALL} : Download specific time clip (e.g. {Fore.YELLOW}trim 01:15-02:30 URL{Style.RESET_ALL})
@@ -930,7 +956,10 @@ def print_banner():
   {Fore.CYAN}720p [URL]{Style.RESET_ALL}              : Download in 720p HD
   {Fore.CYAN}4k [URL]{Style.RESET_ALL}                : Download in 4K / Best Quality
   {Fore.CYAN}mp3 [URL]{Style.RESET_ALL}               : Download as MP3 (320kbps)
+  {Fore.CYAN}m4a [URL]{Style.RESET_ALL}               : Download as Original AAC Audio (.m4a)
   {Fore.CYAN}flac [URL]{Style.RESET_ALL}              : Download as Lossless Studio FLAC
+  {Fore.CYAN}subs [lang] [URL]{Style.RESET_ALL}        : Embed subtitles (e.g. {Fore.YELLOW}subs en URL{Style.RESET_ALL} or {Fore.YELLOW}subs list URL{Style.RESET_ALL})
+  {Fore.CYAN}sb [on/off]{Style.RESET_ALL}              : Toggle SponsorBlock (auto-skip sponsors/promos)
   {Fore.CYAN}ref [site] [URL]{Style.RESET_ALL}        : Cloud stream with Referer (or type 'ref' alone for guided)
   {Fore.CYAN}f [URL]{Style.RESET_ALL}                 : Inspect & pick from ALL exact format codes (-F)
   {Fore.CYAN}cookies <browser>{Style.RESET_ALL}       : Set cookies (chrome / edge / firefox / brave / off)
@@ -940,7 +969,7 @@ def print_banner():
   {Fore.CYAN}c{Style.RESET_ALL} or {Fore.CYAN}clip{Style.RESET_ALL}                : Toggle Clipboard Mode (Auto / Prompt / Off)
   {Fore.CYAN}o{Style.RESET_ALL} or {Fore.CYAN}open{Style.RESET_ALL}                : Open Downloads Folder in Explorer
   {Fore.CYAN}d{Style.RESET_ALL} or {Fore.CYAN}dir{Style.RESET_ALL}                 : Change Downloads Folder
-  {Fore.CYAN}h{Style.RESET_ALL} or {Fore.CYAN}history{Style.RESET_ALL}             : View Download History
+  {Fore.CYAN}h{Style.RESET_ALL} or {Fore.CYAN}history{Style.RESET_ALL} [clear]     : View Download History (or 'h clear' to reset)
   {Fore.CYAN}s{Style.RESET_ALL} or {Fore.CYAN}settings{Style.RESET_ALL}            : Full Settings Menu
   {Fore.CYAN}u{Style.RESET_ALL} or {Fore.CYAN}update{Style.RESET_ALL}              : Update yt-dlp to latest version
   {Fore.CYAN}cls{Style.RESET_ALL}                    : Clear screen and refresh status
@@ -1220,9 +1249,13 @@ def build_ytdlp_command(job_or_url, **kwargs):
             cmd.extend(preset["extra_args"])
 
     # Subtitles handling
+    sub_lang = job.get("sub_lang") if isinstance(job_or_url, dict) else kwargs.get("sub_lang")
     subs_mode = STATE.config.get("subtitles_mode", "off")
-    if (subs_mode != "off" or force_subs) and not preset.get("extract_audio"):
-        lang = "en.*" if subs_mode == "en" else "all"
+    if (subs_mode != "off" or force_subs or sub_lang) and not preset.get("extract_audio"):
+        if sub_lang:
+            lang = sub_lang if sub_lang == "all" else f"{sub_lang}.*"
+        else:
+            lang = "en.*" if subs_mode == "en" else "all"
         cmd.extend(["--write-auto-subs", "--write-subs", "--sub-langs", lang, "--embed-subs"])
 
     # SponsorBlock
@@ -1354,14 +1387,39 @@ def finalize_download(job: dict, success: bool, duration: float, error_msg: str,
             except Exception:
                 pass
 
+        saved_file_name = download_title
+        saved_size_str = ""
+        try:
+            cand_files = sorted(
+                [p for p in Path(effective_target).glob("*") if p.is_file() and not p.name.endswith(".part")],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            if cand_files and (time.time() - cand_files[0].stat().st_mtime) < 120:
+                newest = cand_files[0]
+                saved_file_name = newest.name
+                bytes_len = newest.stat().st_size
+                if bytes_len >= (1024 * 1024 * 1024):
+                    saved_size_str = f" ({bytes_len / (1024**3):.2f} GB)"
+                elif bytes_len >= (1024 * 1024):
+                    saved_size_str = f" ({bytes_len / (1024**2):.1f} MB)"
+                elif bytes_len > 0:
+                    saved_size_str = f" ({bytes_len / 1024:.0f} KB)"
+        except Exception:
+            pass
+
         play_sound("success")
         send_windows_toast("Download Complete!", f"Finished in {duration}s: {download_title[:50]}")
-        print(f"\n{Fore.GREEN}✔ [SUCCESS]{Style.RESET_ALL} Download completed in {duration}s!")
-        print(f"{Fore.LIGHTBLACK_EX}Saved in: {effective_target}{Style.RESET_ALL}\n")
+        print(f"\n{Fore.GREEN}┌───────────────────────────────────────────────────────────────┐{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}│ ✔ DOWNLOAD COMPLETED SUCCESSFULLY ({duration}s){Style.RESET_ALL}")
+        print(f"{Fore.GREEN}│ {Fore.WHITE}File  :{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{saved_file_name}{saved_size_str}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}│ {Fore.WHITE}Preset:{Style.RESET_ALL} {Fore.CYAN}{preset_name}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}│ {Fore.WHITE}Saved :{Style.RESET_ALL} {effective_target}")
+        print(f"{Fore.GREEN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}\n")
         STATE.add_history_entry({
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "url": url,
-            "title": download_title,
+            "title": saved_file_name,
             "preset": preset_name,
             "status": "Success",
             "duration": f"{duration}s"
@@ -1385,8 +1443,12 @@ def finalize_download(job: dict, success: bool, duration: float, error_msg: str,
 
 def execute_download(job: dict):
     """Execute a single download job with live progress display"""
-    cmd, preset_name = build_ytdlp_command(job)
     effective_target = job.get("target_dir") or STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
+    free_gb = get_free_disk_space_gb(Path(effective_target))
+    if 0.0 <= free_gb < 1.0:
+        print(f"{Fore.RED}[⚠️ WARNING] Critical low disk space ({free_gb} GB remaining)! Download may abort if file is large.{Style.RESET_ALL}")
+
+    cmd, preset_name = build_ytdlp_command(job)
     print_download_card(job, preset_name, effective_target)
 
     start_time = time.time()
@@ -1703,8 +1765,15 @@ def change_downloads_folder():
             print(f"{Fore.RED}[!] Invalid folder path: {e}{Style.RESET_ALL}\n")
 
 
-def show_history():
-    """Display download history"""
+def show_history(arg: str = ""):
+    """Display or manage download history: history [clear]"""
+    if str(arg).strip().lower() in ("clear", "cls", "reset"):
+        with STATE.lock:
+            STATE.history.clear()
+            STATE.save_history()
+        print(f"\n{Fore.GREEN}[✓] Download history cleared!{Style.RESET_ALL}\n")
+        return
+
     print(f"\n{Fore.CYAN}═══ RECENT DOWNLOAD HISTORY ═══{Style.RESET_ALL}")
     if not STATE.history:
         print(f"{Fore.LIGHTBLACK_EX}No downloads recorded yet.{Style.RESET_ALL}\n")
@@ -1714,9 +1783,10 @@ def show_history():
         ts = item.get("timestamp", "")
         status = item.get("status", "")
         color = Fore.GREEN if status == "Success" else Fore.RED
-        print(f"  {Fore.LIGHTBLACK_EX}[{ts}]{Style.RESET_ALL} {color}[{status}]{Style.RESET_ALL} {Fore.WHITE}{item.get('url')}{Style.RESET_ALL}")
-        print(f"      Quality: {Fore.CYAN}{item.get('preset')}{Style.RESET_ALL} | Duration: {item.get('duration', 'N/A')}")
-    print()
+        title = item.get("title") or item.get("url")
+        print(f"  {Fore.LIGHTBLACK_EX}[{ts}]{Style.RESET_ALL} {color}[{status}]{Style.RESET_ALL} {Fore.WHITE}{title[:60]}{Style.RESET_ALL}")
+        print(f"      {Fore.LIGHTBLACK_EX}Preset:{Style.RESET_ALL} {Fore.CYAN}{item.get('preset')}{Style.RESET_ALL} | {Fore.LIGHTBLACK_EX}Time:{Style.RESET_ALL} {item.get('duration', 'N/A')} | {Fore.LIGHTBLACK_EX}URL:{Style.RESET_ALL} {item.get('url')}")
+    print(f"{Fore.LIGHTBLACK_EX}Tip: Type 'h clear' or 'history clear' to reset history.{Style.RESET_ALL}\n")
 
 
 def toggle_settings_menu():
@@ -1766,11 +1836,238 @@ def update_ytdlp():
     """Run yt-dlp update command"""
     print(f"\n{Fore.CYAN}[*] Checking for yt-dlp updates...{Style.RESET_ALL}")
     try:
-        subprocess.run([str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "-U"])
+        ytdlp_cmd = str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp")
+        res = subprocess.run([ytdlp_cmd, "-U"])
         STATE.update_available = None
-        print(f"{Fore.GREEN}[✓] Update process finished.{Style.RESET_ALL}\n")
+        if res.returncode == 0:
+            print(f"{Fore.GREEN}[✓] Update process finished successfully.{Style.RESET_ALL}\n")
+        else:
+            print(f"{Fore.YELLOW}[!] yt-dlp update exited with code {res.returncode}.{Style.RESET_ALL}\n")
     except Exception as e:
         print(f"{Fore.RED}[!] Update failed: {e}{Style.RESET_ALL}\n")
+
+
+def cmd_play(raw: str):
+    """Instant search & download top YouTube track as 320kbps MP3: play <query>"""
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        query = parts[1].strip().strip("\"'")
+    else:
+        print(f"\n{Fore.CYAN}═══ 🎵 Instant YouTube Audio Search ═══{Style.RESET_ALL}")
+        query = input(f"{Fore.WHITE}Enter artist, song, or video title >>> {Style.RESET_ALL}").strip().strip("\"'")
+
+    if not query:
+        print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
+        return
+
+    search_target = f"ytsearch1:{query}"
+    print(f"\n{Fore.GREEN}[🔍] Searching & downloading top track:{Style.RESET_ALL} {Fore.CYAN}{query}{Style.RESET_ALL}")
+    STATE.enqueue_job({
+        "url": search_target,
+        "preset_override": 7,
+        "force_audio": True,
+        "display_title": f"🎵 {query.title()}",
+        "needs_quality_prompt": False
+    })
+    print(f"{Fore.LIGHTBLACK_EX}    Queued top YouTube match as 320kbps MP3 with album artwork.{Style.RESET_ALL}\n")
+
+
+def cmd_search(raw: str):
+    """Search YouTube and interactively pick from top 5 results: yt <query> or search <query>"""
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        query = parts[1].strip().strip("\"'")
+    else:
+        print(f"\n{Fore.CYAN}═══ 🔎 Search YouTube Videos ═══{Style.RESET_ALL}")
+        query = input(f"{Fore.WHITE}Search query >>> {Style.RESET_ALL}").strip().strip("\"'")
+
+    if not query:
+        print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
+        return
+
+    print(f"\n{Fore.CYAN}[🔍] Searching YouTube for:{Style.RESET_ALL} {Fore.WHITE}\"{query}\"...{Style.RESET_ALL}")
+    cmd = [
+        str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
+        "--dump-json",
+        "--flat-playlist",
+        "--default-search", "ytsearch5",
+        query
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=12)
+        items = []
+        for line in res.stdout.strip().split("\n"):
+            if line.strip():
+                try:
+                    items.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+
+        if not items:
+            print(f"{Fore.RED}[!] No results found for \"{query}\".{Style.RESET_ALL}\n")
+            return
+
+        print(f"\n{Fore.CYAN}═══ 🔎 YOUTUBE RESULTS FOR: {Fore.WHITE}\"{query}\"{Fore.CYAN} ═══{Style.RESET_ALL}")
+        valid_keys = {"s"}
+        for idx, it in enumerate(items, 1):
+            t = it.get("title", "Unknown Title")
+            d_sec = it.get("duration")
+            if d_sec:
+                m, s = divmod(int(d_sec), 60)
+                h, m = divmod(m, 60)
+                dur_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+            else:
+                dur_str = "--:--"
+            ch = it.get("channel") or it.get("uploader") or "Unknown"
+            valid_keys.add(str(idx))
+            print(f"  {Fore.LIGHTGREEN_EX}[{idx}]{Style.RESET_ALL} {Fore.WHITE}{t[:65]}{Style.RESET_ALL}")
+            print(f"      {Fore.LIGHTBLACK_EX}Duration: {dur_str} | Channel: {ch}{Style.RESET_ALL}")
+
+        valid_keys.add("a")
+        print(f"\n  {Fore.YELLOW}[a] Download ALL {len(items)} results{Style.RESET_ALL}")
+        print(f"  {Fore.YELLOW}[s] Skip / Cancel{Style.RESET_ALL}\n")
+
+        choice = read_single_choice(valid_keys, default_val="s")
+        if choice == "s":
+            print(f"{Fore.LIGHTBLACK_EX}[!] Search cancelled.{Style.RESET_ALL}\n")
+            return
+
+        if choice == "a":
+            for it in items:
+                v_id = it.get("id") or it.get("url")
+                v_url = f"https://www.youtube.com/watch?v={v_id}" if len(str(v_id)) == 11 else str(v_id)
+                STATE.enqueue_job({
+                    "url": v_url,
+                    "display_title": it.get("title"),
+                    "needs_quality_prompt": False
+                })
+            print(f"{Fore.GREEN}[+] Queued all {len(items)} videos!{Style.RESET_ALL}\n")
+        elif choice.isdigit() and 1 <= int(choice) <= len(items):
+            pick = items[int(choice) - 1]
+            v_id = pick.get("id") or pick.get("url")
+            v_url = f"https://www.youtube.com/watch?v={v_id}" if len(str(v_id)) == 11 else str(v_id)
+            STATE.enqueue_job({
+                "url": v_url,
+                "display_title": pick.get("title"),
+                "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+            })
+            print(f"{Fore.GREEN}[+] Queued:{Style.RESET_ALL} {pick.get('title')}\n")
+
+    except Exception as e:
+        print(f"{Fore.RED}[!] Search error: {e}{Style.RESET_ALL}\n")
+
+
+def cmd_inspect(raw: str):
+    """Inspect video metadata, available resolutions, audio streams and subs: info <url>"""
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        url_in = parts[1].strip().strip("\"'")
+    else:
+        print(f"\n{Fore.CYAN}═══ ℹ️ Media Information Inspector ═══{Style.RESET_ALL}")
+        url_in = input(f"{Fore.WHITE}Paste Media URL >>> {Style.RESET_ALL}").strip().strip("\"'")
+
+    if not url_in or not is_valid_media_url(url_in):
+        print(f"{Fore.RED}[!] Invalid media URL.{Style.RESET_ALL}\n")
+        return
+
+    url = extract_media_url(url_in) or url_in
+    print(f"\n{Fore.CYAN}[*] Fetching metadata for:{Style.RESET_ALL} {Fore.WHITE}{url}...{Style.RESET_ALL}")
+
+    cmd = [
+        str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
+        "--dump-single-json",
+        "--no-playlist",
+        url
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
+        if res.returncode != 0 or not res.stdout.strip():
+            print(f"{Fore.RED}[!] Could not retrieve video info. ({res.stderr.strip()[:100]}){Style.RESET_ALL}\n")
+            return
+
+        info = json.loads(res.stdout)
+        title = info.get("title", "Unknown")
+        uploader = info.get("uploader") or info.get("channel") or "Unknown"
+        duration_sec = info.get("duration")
+        if duration_sec:
+            m, s = divmod(int(duration_sec), 60)
+            h, m = divmod(m, 60)
+            dur_str = f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+        else:
+            dur_str = "--:--"
+
+        views = f"{info.get('view_count'):,}" if info.get("view_count") else "N/A"
+        up_date = info.get("upload_date")
+        date_str = f"{up_date[:4]}-{up_date[4:6]}-{up_date[6:]}" if up_date and len(up_date) == 8 else "N/A"
+
+        formats = info.get("formats", [])
+        heights = sorted(list({f.get("height") for f in formats if f.get("height")}), reverse=True)
+        res_tags = []
+        for h in heights[:6]:
+            if h >= 2160:
+                res_tags.append("4K (2160p)")
+            elif h >= 1440:
+                res_tags.append("2K (1440p)")
+            elif h >= 1080:
+                res_tags.append("1080p")
+            elif h >= 720:
+                res_tags.append("720p")
+            elif h >= 480:
+                res_tags.append("480p")
+            elif h >= 360:
+                res_tags.append("360p")
+        res_str = ", ".join(res_tags) if res_tags else "Direct Stream"
+
+        acodecs = sorted(list({f.get("acodec") for f in formats if f.get("acodec") and f.get("acodec") != "none"}))
+        clean_audio = [a.split(".")[0] for a in acodecs]
+        audio_str = ", ".join(sorted(list(set(clean_audio)))) if clean_audio else "Standard Audio"
+
+        sub_keys = list(info.get("subtitles", {}).keys())
+        sub_str = ", ".join(sub_keys[:6]) + ("..." if len(sub_keys) > 6 else "") if sub_keys else "None available"
+
+        print(f"\n{Fore.CYAN}┌───────────────────────────────────────────────────────────────┐{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Style.BRIGHT}{Fore.YELLOW}ℹ️  MEDIA SPECIFICATIONS{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Title    :{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{title[:58]}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Channel  :{Style.RESET_ALL} {Fore.CYAN}{uploader}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Duration :{Style.RESET_ALL} {dur_str}  |  {Fore.WHITE}Views:{Style.RESET_ALL} {views}  |  {Fore.WHITE}Date:{Style.RESET_ALL} {date_str}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Formats  :{Style.RESET_ALL} {Fore.LIGHTMAGENTA_EX}{res_str}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Audio    :{Style.RESET_ALL} {Fore.LIGHTBLUE_EX}{audio_str}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Subs     :{Style.RESET_ALL} {Fore.YELLOW}{sub_str}{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}")
+
+        print(f"{Fore.WHITE}Quick Action:{Style.RESET_ALL} [1] Best Video [2] 1080p [3] MP3 Audio [s] Skip")
+        choice = read_single_choice({"1", "2", "3", "s"}, default_val="s")
+        if choice == "1":
+            STATE.enqueue_job({"url": url, "preset_override": 1, "needs_quality_prompt": False})
+            print(f"{Fore.GREEN}[+] Queued in Best Available Quality!{Style.RESET_ALL}\n")
+        elif choice == "2":
+            STATE.enqueue_job({"url": url, "preset_override": 3, "needs_quality_prompt": False})
+            print(f"{Fore.GREEN}[+] Queued in 1080p Full HD!{Style.RESET_ALL}\n")
+        elif choice == "3":
+            STATE.enqueue_job({"url": url, "preset_override": 7, "force_audio": True, "needs_quality_prompt": False})
+            print(f"{Fore.GREEN}[+] Queued as 320kbps MP3 Audio!{Style.RESET_ALL}\n")
+        else:
+            print(f"{Fore.LIGHTBLACK_EX}Skipped.{Style.RESET_ALL}\n")
+
+    except Exception as e:
+        print(f"{Fore.RED}[!] Inspector error: {e}{Style.RESET_ALL}\n")
+
+
+def cmd_sponsorblock(raw: str = ""):
+    """Handle SponsorBlock toggle: sb [on/off]"""
+    parts = raw.split()
+    if len(parts) > 1:
+        val = parts[1].lower()
+        if val in ("on", "1", "enable", "true"):
+            STATE.config["sponsorblock"] = True
+        elif val in ("off", "0", "disable", "false"):
+            STATE.config["sponsorblock"] = False
+    else:
+        STATE.config["sponsorblock"] = not STATE.config.get("sponsorblock", False)
+    STATE.save_config()
+    status = "ON (Auto-skips sponsors & self-promos)" if STATE.config["sponsorblock"] else "OFF"
+    color = Fore.GREEN if STATE.config["sponsorblock"] else Fore.RED
+    print(f"\n{color}[✓] SponsorBlock set to: {status}{Style.RESET_ALL}\n")
 
 
 def cmd_spotify(raw: str):
@@ -1976,8 +2273,10 @@ QUALITY_SHORTCUT_MAP = {
     "480": (5, False, "480p SD"),
     "360p": (6, False, "360p Data Saver"),
     "360": (6, False, "360p Data Saver"),
-    "mp3": (7, True, "MP3 Audio"),
-    "audio": (7, True, "MP3 Audio"),
+    "mp3": (7, True, "MP3 Audio (320kbps)"),
+    "audio": (7, True, "MP3 Audio (320kbps)"),
+    "m4a": (8, True, "M4A Audio (Original AAC)"),
+    "aac": (8, True, "M4A Audio (Original AAC)"),
     "flac": (9, False, "Lossless FLAC"),
     "opus": (10, False, "OPUS Audio"),
     "wav": (11, False, "Raw WAV Audio"),
@@ -2005,15 +2304,53 @@ def handle_preset_shortcut(keyword: str, arg: str) -> bool:
     return True
 
 
-def handle_subs_command(arg: str):
-    """Handle subtitles download command: subs <URL>"""
-    if not arg or not is_valid_media_url(arg):
-        print(f"{Fore.RED}[!] Usage: subs <URL>{Style.RESET_ALL}")
+def handle_subs_command(raw: str):
+    """Handle subtitles command: subs <url> or subs <lang> <url> or subs list <url>"""
+    tokens = raw.split(maxsplit=2)
+    if len(tokens) == 1:
+        modes = ["off", "en", "all"]
+        cur = STATE.config.get("subtitles_mode", "off")
+        nxt = modes[(modes.index(cur) + 1) % len(modes)] if cur in modes else "off"
+        STATE.config["subtitles_mode"] = nxt
+        STATE.save_config()
+        print(f"\n{Fore.GREEN}[✓] Subtitles mode set to: {nxt.upper()}{Style.RESET_ALL}\n")
         return
-    url = extract_media_url(arg)
-    with STATE.lock:
-        STATE.download_queue.append({"url": url, "force_subs": True, "needs_quality_prompt": False})
-    print(f"{Fore.GREEN}[+] Queued with subtitles:{Style.RESET_ALL} {url}")
+
+    if len(tokens) == 2:
+        arg = tokens[1].strip("\"'")
+        if is_valid_media_url(arg):
+            url = extract_media_url(arg)
+            with STATE.lock:
+                STATE.download_queue.append({"url": url, "force_subs": True, "needs_quality_prompt": False})
+            print(f"{Fore.GREEN}[+] Queued with subtitles:{Style.RESET_ALL} {url}")
+        else:
+            print(f"{Fore.RED}[!] Usage: subs <URL> or subs <lang> <URL> (e.g. subs en URL){Style.RESET_ALL}")
+        return
+
+    if len(tokens) >= 3:
+        sub_arg = tokens[1].lower().strip()
+        url_arg = tokens[2].strip("\"'")
+        if sub_arg == "list":
+            if is_valid_media_url(url_arg):
+                url = extract_media_url(url_arg)
+                print(f"\n{Fore.CYAN}[*] Fetching available subtitles for: {url}...{Style.RESET_ALL}")
+                subprocess.run([str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "--list-subs", url])
+            else:
+                print(f"{Fore.RED}[!] Invalid media URL: {url_arg}{Style.RESET_ALL}")
+            return
+
+        if is_valid_media_url(url_arg):
+            url = extract_media_url(url_arg)
+            with STATE.lock:
+                STATE.download_queue.append({
+                    "url": url,
+                    "force_subs": True,
+                    "sub_lang": sub_arg,
+                    "needs_quality_prompt": False
+                })
+            print(f"{Fore.GREEN}[+] Queued with [{sub_arg.upper()}] subtitles:{Style.RESET_ALL} {url}")
+        else:
+            print(f"{Fore.RED}[!] Invalid media URL: {url_arg}{Style.RESET_ALL}")
 
 
 def handle_formats_command(arg: str):
@@ -2114,6 +2451,8 @@ STATIC_COMMANDS = {
     "history": show_history,
     "s": toggle_settings_menu,
     "settings": toggle_settings_menu,
+    "sb": cmd_sponsorblock,
+    "sponsorblock": cmd_sponsorblock,
     "u": update_ytdlp,
     "update": update_ytdlp,
     "cls": print_banner,
@@ -2141,7 +2480,17 @@ def handle_user_command(user_input: str):
     first_word = raw.split()[0].lower() if " " in raw else raw.lower()
     arg_part = raw.split(maxsplit=1)[1] if " " in raw else ""
 
-    if first_word == "spotify":
+    if first_word in ("play", "song", "music"):
+        cmd_play(raw)
+    elif first_word in ("yt", "search", "find"):
+        cmd_search(raw)
+    elif first_word in ("info", "inspect", "details"):
+        cmd_inspect(raw)
+    elif first_word in ("sb", "sponsorblock"):
+        cmd_sponsorblock(raw)
+    elif first_word in ("h", "history"):
+        show_history(arg_part)
+    elif first_word == "spotify":
         cmd_spotify(raw)
     elif first_word == "cookies":
         cmd_cookies(raw)
@@ -2158,7 +2507,7 @@ def handle_user_command(user_input: str):
     elif handle_preset_shortcut(first_word, arg_part):
         pass
     elif first_word == "subs":
-        handle_subs_command(arg_part)
+        handle_subs_command(raw)
     elif first_word in ("f", "formats"):
         handle_formats_command(arg_part)
     elif first_word == "list":
@@ -2251,11 +2600,23 @@ def process_pending_events(prompt: str, line_buffer: list = None, interactive_co
     return False
 
 
+COMMAND_HISTORY = []
+
+
 def get_nonblocking_line(prompt: str) -> str:
-    """Non-blocking line reader using msvcrt for Windows interactive console"""
+    """Non-blocking line reader using msvcrt with Up/Down arrow command history navigation"""
     sys.stdout.write(prompt)
     sys.stdout.flush()
     line_buffer = []
+    history_idx = len(COMMAND_HISTORY)
+    saved_current = ""
+
+    def _replace_line(new_text: str):
+        nonlocal line_buffer
+        sys.stdout.write("\r" + " " * (len(prompt) + len(line_buffer) + 5) + "\r")
+        line_buffer = list(new_text)
+        sys.stdout.write(prompt + new_text)
+        sys.stdout.flush()
 
     while not STATE.stop_requested:
         if process_pending_events(prompt, line_buffer=line_buffer, interactive_confirm=True):
@@ -2267,7 +2628,11 @@ def get_nonblocking_line(prompt: str) -> str:
                 if ch in ("\r", "\n"):
                     sys.stdout.write("\n")
                     sys.stdout.flush()
-                    return "".join(line_buffer)
+                    line_str = "".join(line_buffer)
+                    if line_str.strip():
+                        if not COMMAND_HISTORY or COMMAND_HISTORY[-1] != line_str.strip():
+                            COMMAND_HISTORY.append(line_str.strip())
+                    return line_str
                 elif ch == "\x08":  # Backspace
                     if line_buffer:
                         line_buffer.pop()
@@ -2285,7 +2650,21 @@ def get_nonblocking_line(prompt: str) -> str:
                     sys.stdout.flush()
                 elif ch in ("\x00", "\xe0"):
                     if msvcrt.kbhit():
-                        msvcrt.getwch()
+                        code = msvcrt.getwch()
+                        if code == "H":  # Up Arrow
+                            if COMMAND_HISTORY:
+                                if history_idx == len(COMMAND_HISTORY):
+                                    saved_current = "".join(line_buffer)
+                                if history_idx > 0:
+                                    history_idx -= 1
+                                    _replace_line(COMMAND_HISTORY[history_idx])
+                        elif code == "P":  # Down Arrow
+                            if history_idx < len(COMMAND_HISTORY) - 1:
+                                history_idx += 1
+                                _replace_line(COMMAND_HISTORY[history_idx])
+                            elif history_idx == len(COMMAND_HISTORY) - 1:
+                                history_idx += 1
+                                _replace_line(saved_current)
                 elif ord(ch) >= 32:
                     line_buffer.append(ch)
                     sys.stdout.write(ch)
