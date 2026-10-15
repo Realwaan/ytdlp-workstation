@@ -1073,8 +1073,40 @@ def prompt_video_quality(url: str, referer: str = None):
         return default_pid, None
 
 
-def build_ytdlp_command(url: str, custom_preset: int = None, custom_format_str: str = None, force_audio: bool = False, force_video: bool = False, force_playlist: bool = False, download_section: str = None, playlist_items: str = None, force_subs: bool = False, referer: str = None, headers: list = None, target_dir: Path = None, custom_output_template: str = None, extra_metadata: dict = None):
+def build_ytdlp_command(job_or_url, **kwargs):
     """Construct command arguments for yt-dlp with full power-user features & 99.9% reliability"""
+    if isinstance(job_or_url, dict):
+        job = job_or_url
+        url = job["url"]
+        custom_preset = job.get("preset_override")
+        custom_format_str = job.get("custom_format_str")
+        force_audio = job.get("force_audio", False)
+        force_video = job.get("force_video", False)
+        force_playlist = job.get("force_playlist", False)
+        download_section = job.get("download_section")
+        playlist_items = job.get("playlist_items")
+        force_subs = job.get("force_subs", False)
+        referer = job.get("referer")
+        headers = job.get("headers")
+        target_dir = job.get("target_dir")
+        custom_output_template = job.get("custom_output_template")
+        extra_metadata = job.get("extra_metadata")
+    else:
+        url = str(job_or_url)
+        custom_preset = kwargs.get("custom_preset")
+        custom_format_str = kwargs.get("custom_format_str")
+        force_audio = kwargs.get("force_audio", False)
+        force_video = kwargs.get("force_video", False)
+        force_playlist = kwargs.get("force_playlist", False)
+        download_section = kwargs.get("download_section")
+        playlist_items = kwargs.get("playlist_items")
+        force_subs = kwargs.get("force_subs", False)
+        referer = kwargs.get("referer")
+        headers = kwargs.get("headers")
+        target_dir = kwargs.get("target_dir")
+        custom_output_template = kwargs.get("custom_output_template")
+        extra_metadata = kwargs.get("extra_metadata")
+
     preset_id = custom_preset or STATE.config.get("preset", 1)
     if force_audio:
         preset_id = 7
@@ -1253,41 +1285,24 @@ def format_linux_bar(title: str, p_str: str, d_str: str, t_str: str, s_str: str,
     return out, pct, spd, eta
 
 
-def execute_download(job):
-    """Execute a single download job with live progress display"""
-    url = job["url"]
-    preset_override = job.get("preset_override")
-    custom_format_str = job.get("custom_format_str")
-    force_audio = job.get("force_audio", False)
-    force_video = job.get("force_video", False)
-    force_playlist = job.get("force_playlist", False)
-    download_section = job.get("download_section")
-    playlist_items = job.get("playlist_items")
-    force_subs = job.get("force_subs", False)
-    target_dir = job.get("target_dir")
-    custom_output_template = job.get("custom_output_template")
-    extra_metadata = job.get("extra_metadata")
+def set_console_title(title: str):
+    """Update Windows console title bar if running on Windows"""
+    if os.name == "nt":
+        try:
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
+
+
+def reset_console_title():
+    """Reset console title to default workstation title"""
+    set_console_title("★ YT-DLP Supercharged Workstation ★")
+
+
+def print_download_card(job: dict, preset_name: str, effective_target: str):
+    """Render a clean status card for an upcoming download"""
+    url = job.get("url", "")
     display_title = job.get("display_title")
-    spotify_thumbnail = job.get("spotify_thumbnail")
-
-    cmd, preset_name = build_ytdlp_command(
-        url,
-        custom_preset=preset_override,
-        custom_format_str=custom_format_str,
-        force_audio=force_audio,
-        force_video=force_video,
-        force_playlist=force_playlist,
-        download_section=download_section,
-        playlist_items=playlist_items,
-        force_subs=force_subs,
-        referer=job.get("referer"),
-        headers=job.get("headers"),
-        target_dir=target_dir,
-        custom_output_template=custom_output_template,
-        extra_metadata=extra_metadata
-    )
-
-    effective_target = target_dir or STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
     print(f"\n{Fore.CYAN}┌───────────────────────────────────────────────────────────────┐{Style.RESET_ALL}")
     print(f"{Fore.CYAN}│ {Style.BRIGHT}{Fore.YELLOW}⚡ STARTING DOWNLOAD{Style.RESET_ALL}")
     if display_title:
@@ -1296,145 +1311,33 @@ def execute_download(job):
     print(f"{Fore.CYAN}│ {Fore.WHITE}Quality:{Style.RESET_ALL} {Fore.GREEN}{preset_name}{Style.RESET_ALL}")
     if job.get("referer"):
         print(f"{Fore.CYAN}│ {Fore.WHITE}Referer:{Style.RESET_ALL} {Fore.YELLOW}{job['referer']}{Style.RESET_ALL}")
-    if download_section:
-        print(f"{Fore.CYAN}│ {Fore.WHITE}Trim   :{Style.RESET_ALL} {Fore.YELLOW}{download_section}{Style.RESET_ALL}")
-    if playlist_items:
-        print(f"{Fore.CYAN}│ {Fore.WHITE}Tracks :{Style.RESET_ALL} {Fore.YELLOW}{playlist_items}{Style.RESET_ALL}")
+    if job.get("download_section"):
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Trim   :{Style.RESET_ALL} {Fore.YELLOW}{job['download_section']}{Style.RESET_ALL}")
+    if job.get("playlist_items"):
+        print(f"{Fore.CYAN}│ {Fore.WHITE}Tracks :{Style.RESET_ALL} {Fore.YELLOW}{job['playlist_items']}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}│ {Fore.WHITE}Target :{Style.RESET_ALL} {effective_target}")
     print(f"{Fore.CYAN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}\n")
 
-    start_time = time.time()
-    success = False
-    error_msg = ""
-    last_pct = 0.0
-    has_shown_bar = False
-    download_title = display_title or Path(url).stem
-    captured_errors = []
-    in_error_mode = False
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1
-        )
+def parse_progress_data(line: str) -> dict:
+    """Extract progress metadata fields from yt-dlp progress template output"""
+    data = {}
+    prog_part = line.split("PROGRESS|")[-1]
+    for segment in prog_part.split("|"):
+        if "=" in segment:
+            k, v = segment.split("=", 1)
+            data[k.strip()] = v.strip()
+    return data
 
-        for raw_line in proc.stdout:
-            line = raw_line.strip()
-            if not line:
-                continue
 
-            if "PROGRESS|P=" in line or line.startswith("PROGRESS|") or ("P=" in line and "|D=" in line and "|S=" in line):
-                in_error_mode = False
-                data = {}
-                prog_part = line.split("PROGRESS|")[-1]
-                for segment in prog_part.split("|"):
-                    if "=" in segment:
-                        k, v = segment.split("=", 1)
-                        data[k.strip()] = v.strip()
-
-                p_val = data.get("P", "0.0%")
-                d_val = data.get("D", "")
-                t_val = data.get("T", "")
-                s_val = data.get("S", "--")
-                e_val = data.get("E", "--:--")
-                f_val = data.get("F", "")
-
-                bar_text, pct, spd, eta = format_linux_bar(download_title, p_val, d_val, t_val, s_val, e_val, f_val)
-                sys.stdout.write(bar_text)
-                sys.stdout.flush()
-                has_shown_bar = True
-                last_pct = pct
-
-                # Update Windows Console Title Bar
-                if os.name == "nt":
-                    try:
-                        ctypes.windll.kernel32.SetConsoleTitleW(f"[{pct:.1f}% - {spd} - ETA {eta}] YT-DLP Workstation")
-                    except Exception:
-                        pass
-
-            elif "[download] Destination:" in line:
-                in_error_mode = False
-                try:
-                    dest = line.split("Destination:", 1)[1].strip()
-                    download_title = Path(dest).stem
-                except Exception:
-                    pass
-                if has_shown_bar:
-                    sys.stdout.write("\n")
-                    has_shown_bar = False
-                print(f"{Fore.LIGHTCYAN_EX}[+] File:{Style.RESET_ALL} {download_title}")
-
-            elif any(ign in line for ign in ("Retrying fragment", "fragment not found; Skipping", "Live HLS streams are not supported")):
-                # Suppress repetitive fragment retry spam to keep progress display pristine
-                continue
-
-            elif "ERROR:" in line:
-                if has_shown_bar:
-                    sys.stdout.write("\n")
-                    has_shown_bar = False
-                print(f"{Fore.RED}{line}{Style.RESET_ALL}")
-                err_detail = line.replace("ERROR:", "").strip()
-                if err_detail:
-                    captured_errors.append(err_detail)
-                in_error_mode = True
-
-            elif "WARNING:" in line:
-                if has_shown_bar:
-                    sys.stdout.write("\n")
-                    has_shown_bar = False
-                print(f"{Fore.YELLOW}{line}{Style.RESET_ALL}")
-
-            elif in_error_mode and not any(k in line for k in ("PROGRESS|", "[download]", "[info]")):
-                print(f"{Fore.RED}       {line}{Style.RESET_ALL}")
-                captured_errors.append(line)
-
-            elif "[info]" in line or "[Fixup" in line:
-                in_error_mode = False
-                if has_shown_bar:
-                    sys.stdout.write("\n")
-                    has_shown_bar = False
-                print(f"{Fore.LIGHTBLACK_EX}{line}{Style.RESET_ALL}")
-
-        proc.wait()
-        if has_shown_bar:
-            sys.stdout.write("\n")
-
-        success = (proc.returncode == 0)
-
-        # Smart verification: If progress reached 100% or file is completely written, mark success
-        if not success and last_pct >= 99.0:
-            success = True
-
-        if not success:
-            cleanup_orphaned_fragments(Path(effective_target))
-            if captured_errors:
-                error_msg = " | ".join(captured_errors[:2])
-            else:
-                error_msg = f"yt-dlp exited with error code {proc.returncode}"
-
-    except KeyboardInterrupt:
-        cleanup_orphaned_fragments(Path(effective_target))
-        print(f"\n{Fore.YELLOW}[!] Download cancelled by user.{Style.RESET_ALL}")
-        error_msg = "Cancelled by user"
-    except Exception as e:
-        success = False
-        error_msg = str(e)
-    finally:
-        if os.name == "nt":
-            try:
-                ctypes.windll.kernel32.SetConsoleTitleW("★ YT-DLP Supercharged Workstation ★")
-            except Exception:
-                pass
-
-    duration = round(time.time() - start_time, 1)
+def finalize_download(job: dict, success: bool, duration: float, error_msg: str,
+                      download_title: str, preset_name: str, effective_target: str):
+    """Handle post-download operations: cover art embedding, sound, toast, history logging"""
+    url = job.get("url", "")
+    spotify_thumbnail = job.get("spotify_thumbnail")
+    custom_output_template = job.get("custom_output_template")
 
     if success:
-        # If Spotify thumbnail is present, embed official album artwork into MP3
         if spotify_thumbnail:
             try:
                 mp3_target = None
@@ -1478,6 +1381,123 @@ def execute_download(job):
             "status": "Failed",
             "error": error_msg
         })
+
+
+def execute_download(job: dict):
+    """Execute a single download job with live progress display"""
+    cmd, preset_name = build_ytdlp_command(job)
+    effective_target = job.get("target_dir") or STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
+    print_download_card(job, preset_name, effective_target)
+
+    start_time = time.time()
+    success = False
+    error_msg = ""
+    last_pct = 0.0
+    has_shown_bar = False
+    download_title = job.get("display_title") or Path(job["url"]).stem
+    captured_errors = []
+    in_error_mode = False
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1
+        )
+
+        for raw_line in proc.stdout:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            if "PROGRESS|P=" in line or line.startswith("PROGRESS|") or ("P=" in line and "|D=" in line and "|S=" in line):
+                in_error_mode = False
+                data = parse_progress_data(line)
+                bar_text, pct, spd, eta = format_linux_bar(
+                    download_title,
+                    data.get("P", "0.0%"),
+                    data.get("D", ""),
+                    data.get("T", ""),
+                    data.get("S", "--"),
+                    data.get("E", "--:--"),
+                    data.get("F", "")
+                )
+                sys.stdout.write(bar_text)
+                sys.stdout.flush()
+                has_shown_bar = True
+                last_pct = pct
+                set_console_title(f"[{pct:.1f}% - {spd} - ETA {eta}] YT-DLP Workstation")
+
+            elif "[download] Destination:" in line:
+                in_error_mode = False
+                try:
+                    dest = line.split("Destination:", 1)[1].strip()
+                    download_title = Path(dest).stem
+                except Exception:
+                    pass
+                if has_shown_bar:
+                    sys.stdout.write("\n")
+                    has_shown_bar = False
+                print(f"{Fore.LIGHTCYAN_EX}[+] File:{Style.RESET_ALL} {download_title}")
+
+            elif any(ign in line for ign in ("Retrying fragment", "fragment not found; Skipping", "Live HLS streams are not supported")):
+                continue
+
+            elif "ERROR:" in line:
+                if has_shown_bar:
+                    sys.stdout.write("\n")
+                    has_shown_bar = False
+                print(f"{Fore.RED}{line}{Style.RESET_ALL}")
+                err_detail = line.replace("ERROR:", "").strip()
+                if err_detail:
+                    captured_errors.append(err_detail)
+                in_error_mode = True
+
+            elif "WARNING:" in line:
+                if has_shown_bar:
+                    sys.stdout.write("\n")
+                    has_shown_bar = False
+                print(f"{Fore.YELLOW}{line}{Style.RESET_ALL}")
+
+            elif in_error_mode and not any(k in line for k in ("PROGRESS|", "[download]", "[info]")):
+                print(f"{Fore.RED}       {line}{Style.RESET_ALL}")
+                captured_errors.append(line)
+
+            elif "[info]" in line or "[Fixup" in line:
+                in_error_mode = False
+                if has_shown_bar:
+                    sys.stdout.write("\n")
+                    has_shown_bar = False
+                print(f"{Fore.LIGHTBLACK_EX}{line}{Style.RESET_ALL}")
+
+        proc.wait()
+        if has_shown_bar:
+            sys.stdout.write("\n")
+
+        success = (proc.returncode == 0)
+        if not success and last_pct >= 99.0:
+            success = True
+
+        if not success:
+            cleanup_orphaned_fragments(Path(effective_target))
+            error_msg = " | ".join(captured_errors[:2]) if captured_errors else f"yt-dlp exited with error code {proc.returncode}"
+
+    except KeyboardInterrupt:
+        cleanup_orphaned_fragments(Path(effective_target))
+        print(f"\n{Fore.YELLOW}[!] Download cancelled by user.{Style.RESET_ALL}")
+        error_msg = "Cancelled by user"
+    except Exception as e:
+        success = False
+        error_msg = str(e)
+    finally:
+        reset_console_title()
+
+    duration = round(time.time() - start_time, 1)
+    finalize_download(job, success, duration, error_msg, download_title, preset_name, effective_target)
 
 
 def clipboard_watcher_thread():
@@ -1753,166 +1773,102 @@ def update_ytdlp():
         print(f"{Fore.RED}[!] Update failed: {e}{Style.RESET_ALL}\n")
 
 
-def handle_user_command(user_input: str):
-    """Process an entered line from the terminal prompt"""
-    raw = user_input.strip()
-    if not raw:
-        return
-
-    cmd_lower = raw.lower()
-
-    if cmd_lower in ("q", "exit", "quit"):
-        print(f"{Fore.YELLOW}Exiting YT-DLP Terminal. Goodbye!{Style.RESET_ALL}")
-        STATE.stop_requested = True
-        sys.exit(0)
-
-    elif cmd_lower in ("c", "clip"):
-        toggle_clipboard_mode()
-
-    elif cmd_lower in ("p", "preset"):
-        select_preset_menu()
-
-    elif cmd_lower in ("qmode", "ask", "quality"):
-        toggle_quality_prompt()
-
-    elif cmd_lower in ("o", "open"):
-        open_downloads_folder()
-
-    elif cmd_lower in ("d", "dir"):
-        change_downloads_folder()
-
-    elif cmd_lower in ("h", "history"):
-        show_history()
-
-    elif cmd_lower in ("s", "settings"):
-        toggle_settings_menu()
-
-    elif cmd_lower in ("u", "update"):
-        update_ytdlp()
-
-    elif cmd_lower in ("cls", "clear"):
-        print_banner()
-
-    elif cmd_lower in ("?", "help"):
-        print_banner()
-
-    # Spotify studio downloader command: spotify <url> or interactive spotify
-    elif raw == "spotify" or raw.startswith("spotify "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1:
-            enqueue_spotify_download(parts[1].strip("\"'"))
+def cmd_spotify(raw: str):
+    """Handle 'spotify <url>' or interactive Spotify downloader prompt"""
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        enqueue_spotify_download(parts[1].strip("\"'"))
+    else:
+        print(f"\n{Fore.CYAN}═══ 🎵 Spotify Studio Downloader ═══{Style.RESET_ALL}")
+        print(f"{Fore.WHITE}Paste Spotify track, album, or playlist URL:{Style.RESET_ALL}")
+        s_url = input("Spotify URL >>> ").strip().strip("\"'")
+        if s_url:
+            enqueue_spotify_download(s_url)
         else:
-            print(f"\n{Fore.CYAN}═══ 🎵 Spotify Studio Downloader ═══{Style.RESET_ALL}")
-            print(f"{Fore.WHITE}Paste Spotify track, album, or playlist URL:{Style.RESET_ALL}")
-            s_url = input("Spotify URL >>> ").strip().strip("\"'")
-            if s_url:
-                enqueue_spotify_download(s_url)
-            else:
-                print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
+            print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
 
-    # Browser cookies shortcut: cookies chrome / cookies off
-    elif raw.startswith("cookies "):
-        browser = raw.split(maxsplit=1)[1].strip().lower()
-        if browser in ("off", "none", "disable"):
-            STATE.config["browser_cookies"] = "none"
-        else:
-            STATE.config["browser_cookies"] = browser
-        STATE.save_config()
-    # Active streaming site command: site <url_or_name> (e.g. site cinejoy, site movy, site bingebox)
-    elif raw == "site" or raw.startswith("site "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) == 1:
-            cur_site = getattr(STATE, "last_seen_website", None) or STATE.config.get("default_stream_referer", "https://movy.sx/")
-            print(f"\n{Fore.CYAN}═══ 🌐 ACTIVE STREAMING SITE ═══{Style.RESET_ALL}")
-            print(f"Current Auto-Referer: {Fore.GREEN}{cur_site}{Style.RESET_ALL}")
-            print(f"Quick Presets:")
-            print(f"  {Fore.YELLOW}site movy{Style.RESET_ALL}       -> https://movy.sx/")
-            print(f"  {Fore.YELLOW}site cinejoy{Style.RESET_ALL}    -> https://cinejoy.pk/")
-            print(f"  {Fore.YELLOW}site bingebox{Style.RESET_ALL}   -> https://bingebox.ac/")
-            print(f"  {Fore.YELLOW}site popcorn{Style.RESET_ALL}    -> https://popcornmovies.ac/")
-            print(f"  {Fore.YELLOW}site <any_site>{Style.RESET_ALL}  -> any custom site URL\n")
-        else:
-            arg = parts[1].strip().lower()
-            alias_map = {
-                "movy": "https://movy.sx/",
-                "cinejoy": "https://cinejoy.pk/",
-                "bingebox": "https://bingebox.ac/",
-                "popcorn": "https://popcornmovies.ac/",
-                "popcornmovies": "https://popcornmovies.ac/",
-                "vidsrc": "https://vidsrc.to/",
-            }
-            new_site = alias_map.get(arg)
-            if not new_site:
-                new_site = arg if arg.startswith(("http://", "https://")) else f"https://{arg}/"
-                if not new_site.endswith("/"):
-                    new_site += "/"
-            STATE.last_seen_website = new_site
-            STATE.config["default_stream_referer"] = new_site
-            STATE.save_config()
-            print(f"{Fore.GREEN}[✓] Active streaming site set to:{Style.RESET_ALL} {new_site}\n")
 
-    # Cloud streaming / embed server referer command: ref <referer_site> <stream_m3u8_url> or interactive ref
-    elif raw == "ref" or raw == "referer" or raw.startswith("ref ") or raw.startswith("referer "):
-        tokens = raw.split(maxsplit=2)
-        ref_presets = {
-            "1": "https://movy.sx/",
-            "2": "https://cinejoy.pk/",
-            "3": "https://bingebox.ac/",
-            "4": "https://popcornmovies.ac/",
-            "5": "https://vidsrc.to/"
+def cmd_cookies(raw: str):
+    """Handle 'cookies <browser|off>' command"""
+    browser = raw.split(maxsplit=1)[1].strip().lower()
+    if browser in ("off", "none", "disable"):
+        STATE.config["browser_cookies"] = "none"
+    else:
+        STATE.config["browser_cookies"] = browser
+    STATE.save_config()
+
+
+def cmd_site(raw: str):
+    """Handle active streaming site command: site [url_or_alias]"""
+    parts = raw.split(maxsplit=1)
+    if len(parts) == 1:
+        cur_site = getattr(STATE, "last_seen_website", None) or STATE.config.get("default_stream_referer", "https://movy.sx/")
+        print(f"\n{Fore.CYAN}═══ 🌐 ACTIVE STREAMING SITE ═══{Style.RESET_ALL}")
+        print(f"Current Auto-Referer: {Fore.GREEN}{cur_site}{Style.RESET_ALL}")
+        print("Quick Presets:")
+        print(f"  {Fore.YELLOW}site movy{Style.RESET_ALL}       -> https://movy.sx/")
+        print(f"  {Fore.YELLOW}site cinejoy{Style.RESET_ALL}    -> https://cinejoy.pk/")
+        print(f"  {Fore.YELLOW}site bingebox{Style.RESET_ALL}   -> https://bingebox.ac/")
+        print(f"  {Fore.YELLOW}site popcorn{Style.RESET_ALL}    -> https://popcornmovies.ac/")
+        print(f"  {Fore.YELLOW}site <any_site>{Style.RESET_ALL}  -> any custom site URL\n")
+    else:
+        arg = parts[1].strip().lower()
+        alias_map = {
+            "movy": "https://movy.sx/",
+            "cinejoy": "https://cinejoy.pk/",
+            "bingebox": "https://bingebox.ac/",
+            "popcorn": "https://popcornmovies.ac/",
+            "popcornmovies": "https://popcornmovies.ac/",
+            "vidsrc": "https://vidsrc.to/",
         }
+        new_site = alias_map.get(arg)
+        if not new_site:
+            new_site = arg if arg.startswith(("http://", "https://")) else f"https://{arg}/"
+            if not new_site.endswith("/"):
+                new_site += "/"
+        STATE.last_seen_website = new_site
+        STATE.config["default_stream_referer"] = new_site
+        STATE.save_config()
+        print(f"{Fore.GREEN}[✓] Active streaming site set to:{Style.RESET_ALL} {new_site}\n")
 
-        def _clean_ref(val: str) -> str:
-            val = val.strip().strip("\"'")
-            if not val or val == "1":
-                return ref_presets["1"]
-            if val in ref_presets:
-                return ref_presets[val]
-            if not val.startswith(("http://", "https://")):
-                return "https://" + val
-            return val
 
-        if len(tokens) == 1:
-            # Interactive guided mode!
-            print(f"\n{Fore.CYAN}═══ ☁️ Cloud Server / Embed Referer Helper ═══{Style.RESET_ALL}")
-            print(f"{Fore.WHITE}Choose a quick preset or type ANY streaming website:{Style.RESET_ALL}")
-            print(f"  {Fore.LIGHTGREEN_EX}[1]{Style.RESET_ALL} https://movy.sx/ {Fore.LIGHTBLACK_EX}(Default - press Enter){Style.RESET_ALL}")
-            print(f"  {Fore.YELLOW}[2]{Style.RESET_ALL} https://cinejoy.pk/")
-            print(f"  {Fore.YELLOW}[3]{Style.RESET_ALL} https://bingebox.ac/")
-            print(f"  {Fore.YELLOW}[4]{Style.RESET_ALL} https://popcornmovies.ac/")
-            print(f"  {Fore.YELLOW}[5]{Style.RESET_ALL} https://vidsrc.to/")
-            print(f"  {Fore.CYAN}[Any]{Style.RESET_ALL} Type any website URL (e.g. {Fore.WHITE}netflix.com{Style.RESET_ALL}, {Fore.WHITE}site.to{Style.RESET_ALL})")
-            ref_input = input("Referer [1-5 or custom] >>> ").strip()
-            ref_url = _clean_ref(ref_input)
+def cmd_ref(raw: str):
+    """Handle referer streaming helper command: ref [referer] [stream_url]"""
+    tokens = raw.split(maxsplit=2)
+    ref_presets = {
+        "1": "https://movy.sx/",
+        "2": "https://cinejoy.pk/",
+        "3": "https://bingebox.ac/",
+        "4": "https://popcornmovies.ac/",
+        "5": "https://vidsrc.to/"
+    }
 
-            print(f"{Fore.WHITE}Paste stream URL (.m3u8):{Style.RESET_ALL}")
-            stream_input = input("Stream URL >>> ").strip().strip("\"'")
-            if stream_input:
-                media_url = extract_media_url(stream_input) or stream_input
-                with STATE.lock:
-                    STATE.download_queue.append({
-                        "url": media_url,
-                        "referer": ref_url,
-                        "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
-                    })
-                print(f"{Fore.GREEN}[+] Queued with Referer [{ref_url}]:{Style.RESET_ALL} {media_url}\n")
-            else:
-                print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
+    def _clean_ref(val: str) -> str:
+        val = val.strip().strip("\"'")
+        if not val or val == "1":
+            return ref_presets["1"]
+        if val in ref_presets:
+            return ref_presets[val]
+        if not val.startswith(("http://", "https://")):
+            return "https://" + val
+        return val
 
-        elif len(tokens) == 2:
-            # User typed: ref <url>
-            target_url = tokens[1].strip("\"'")
-            print(f"\n{Fore.WHITE}Choose a quick preset or type ANY streaming website:{Style.RESET_ALL}")
-            print(f"  {Fore.LIGHTGREEN_EX}[1]{Style.RESET_ALL} https://movy.sx/ {Fore.LIGHTBLACK_EX}(Default - press Enter){Style.RESET_ALL}")
-            print(f"  {Fore.YELLOW}[2]{Style.RESET_ALL} https://cinejoy.pk/")
-            print(f"  {Fore.YELLOW}[3]{Style.RESET_ALL} https://bingebox.ac/")
-            print(f"  {Fore.YELLOW}[4]{Style.RESET_ALL} https://popcornmovies.ac/")
-            print(f"  {Fore.YELLOW}[5]{Style.RESET_ALL} https://vidsrc.to/")
-            print(f"  {Fore.CYAN}[Any]{Style.RESET_ALL} Type any website URL:")
-            ref_input = input("Referer [1-5 or custom] >>> ").strip()
-            ref_url = _clean_ref(ref_input)
+    if len(tokens) == 1:
+        print(f"\n{Fore.CYAN}═══ ☁️ Cloud Server / Embed Referer Helper ═══{Style.RESET_ALL}")
+        print(f"{Fore.WHITE}Choose a quick preset or type ANY streaming website:{Style.RESET_ALL}")
+        print(f"  {Fore.LIGHTGREEN_EX}[1]{Style.RESET_ALL} https://movy.sx/ {Fore.LIGHTBLACK_EX}(Default - press Enter){Style.RESET_ALL}")
+        print(f"  {Fore.YELLOW}[2]{Style.RESET_ALL} https://cinejoy.pk/")
+        print(f"  {Fore.YELLOW}[3]{Style.RESET_ALL} https://bingebox.ac/")
+        print(f"  {Fore.YELLOW}[4]{Style.RESET_ALL} https://popcornmovies.ac/")
+        print(f"  {Fore.YELLOW}[5]{Style.RESET_ALL} https://vidsrc.to/")
+        print(f"  {Fore.CYAN}[Any]{Style.RESET_ALL} Type any website URL (e.g. {Fore.WHITE}netflix.com{Style.RESET_ALL}, {Fore.WHITE}site.to{Style.RESET_ALL})")
+        ref_input = input("Referer [1-5 or custom] >>> ").strip()
+        ref_url = _clean_ref(ref_input)
 
-            media_url = extract_media_url(target_url) or target_url
+        print(f"{Fore.WHITE}Paste stream URL (.m3u8):{Style.RESET_ALL}")
+        stream_input = input("Stream URL >>> ").strip().strip("\"'")
+        if stream_input:
+            media_url = extract_media_url(stream_input) or stream_input
             with STATE.lock:
                 STATE.download_queue.append({
                     "url": media_url,
@@ -1920,326 +1876,406 @@ def handle_user_command(user_input: str):
                     "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
                 })
             print(f"{Fore.GREEN}[+] Queued with Referer [{ref_url}]:{Style.RESET_ALL} {media_url}\n")
+        else:
+            print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
 
-        elif len(tokens) >= 3:
-            arg1 = tokens[1].strip("\"'")
-            arg2 = tokens[2].strip("\"'")
+    elif len(tokens) == 2:
+        target_url = tokens[1].strip("\"'")
+        print(f"\n{Fore.WHITE}Choose a quick preset or type ANY streaming website:{Style.RESET_ALL}")
+        print(f"  {Fore.LIGHTGREEN_EX}[1]{Style.RESET_ALL} https://movy.sx/ {Fore.LIGHTBLACK_EX}(Default - press Enter){Style.RESET_ALL}")
+        print(f"  {Fore.YELLOW}[2]{Style.RESET_ALL} https://cinejoy.pk/")
+        print(f"  {Fore.YELLOW}[3]{Style.RESET_ALL} https://bingebox.ac/")
+        print(f"  {Fore.YELLOW}[4]{Style.RESET_ALL} https://popcornmovies.ac/")
+        print(f"  {Fore.YELLOW}[5]{Style.RESET_ALL} https://vidsrc.to/")
+        print(f"  {Fore.CYAN}[Any]{Style.RESET_ALL} Type any website URL:")
+        ref_input = input("Referer [1-5 or custom] >>> ").strip()
+        ref_url = _clean_ref(ref_input)
 
-            # Handle if user swapped referer and stream url
-            if ".m3u8" in arg1.lower() or "vd/" in arg1.lower() or "top/" in arg1.lower():
-                media_url = extract_media_url(arg1) or arg1
-                ref_url = _clean_ref(arg2)
-            else:
-                ref_url = _clean_ref(arg1)
-                media_url = extract_media_url(arg2) or arg2
+        media_url = extract_media_url(target_url) or target_url
+        with STATE.lock:
+            STATE.download_queue.append({
+                "url": media_url,
+                "referer": ref_url,
+                "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+            })
+        print(f"{Fore.GREEN}[+] Queued with Referer [{ref_url}]:{Style.RESET_ALL} {media_url}\n")
 
-            with STATE.lock:
-                STATE.download_queue.append({
-                    "url": media_url,
-                    "referer": ref_url,
-                    "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
-                })
-            print(f"{Fore.GREEN}[+] Queued with Referer [{ref_url}]:{Style.RESET_ALL} {media_url}")
+    elif len(tokens) >= 3:
+        arg1 = tokens[1].strip("\"'")
+        arg2 = tokens[2].strip("\"'")
 
-    # Speed limit shortcut: limit 5M / limit off
-    elif raw.startswith("limit ") or raw.startswith("speed "):
-        lim = raw.split(maxsplit=1)[1].strip().lower()
-        STATE.config["speed_limit"] = "none" if lim in ("off", "none", "0") else lim
+        if ".m3u8" in arg1.lower() or "vd/" in arg1.lower() or "top/" in arg1.lower():
+            media_url = extract_media_url(arg1) or arg1
+            ref_url = _clean_ref(arg2)
+        else:
+            ref_url = _clean_ref(arg1)
+            media_url = extract_media_url(arg2) or arg2
+
+        with STATE.lock:
+            STATE.download_queue.append({
+                "url": media_url,
+                "referer": ref_url,
+                "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+            })
+        print(f"{Fore.GREEN}[+] Queued with Referer [{ref_url}]:{Style.RESET_ALL} {media_url}")
+
+
+def cmd_limit(raw: str):
+    """Handle speed limit shortcut: limit 5M / limit off"""
+    lim = raw.split(maxsplit=1)[1].strip().lower()
+    STATE.config["speed_limit"] = "none" if lim in ("off", "none", "0") else lim
+    STATE.save_config()
+    print(f"{Fore.GREEN}[✓] Speed limit set to: {STATE.config['speed_limit'].upper()}{Style.RESET_ALL}")
+
+
+def cmd_trim(raw: str):
+    """Handle video trimming: trim <start>-<end> <URL>"""
+    tokens = raw.split(maxsplit=2)
+    if len(tokens) >= 3 and is_valid_media_url(tokens[2]):
+        time_range = tokens[1]
+        url = extract_media_url(tokens[2])
+        with STATE.lock:
+            STATE.download_queue.append({
+                "url": url,
+                "download_section": time_range,
+                "needs_quality_prompt": False
+            })
+        print(f"{Fore.GREEN}[+] Queued clip [{time_range}]:{Style.RESET_ALL} {url}")
+    else:
+        print(f"{Fore.RED}[!] Usage: trim <start>-<end> <URL>  (e.g. trim 01:15-02:30 https://...){Style.RESET_ALL}")
+
+
+def cmd_items(raw: str):
+    """Handle playlist selective items: items 1-5 <URL>"""
+    tokens = raw.split(maxsplit=2)
+    if len(tokens) >= 3 and is_valid_media_url(tokens[2]):
+        items_range = tokens[1]
+        url = extract_media_url(tokens[2])
+        with STATE.lock:
+            STATE.download_queue.append({
+                "url": url,
+                "playlist_items": items_range,
+                "needs_quality_prompt": False
+            })
+        print(f"{Fore.GREEN}[+] Queued playlist tracks [{items_range}]:{Style.RESET_ALL} {url}")
+    else:
+        print(f"{Fore.RED}[!] Usage: items <range> <URL>  (e.g. items 1-5 https://...){Style.RESET_ALL}")
+
+
+QUALITY_SHORTCUT_MAP = {
+    "1080p": (3, False, "1080p Full HD"),
+    "1080": (3, False, "1080p Full HD"),
+    "720p": (4, False, "720p HD"),
+    "720": (4, False, "720p HD"),
+    "4k": (1, False, "4K / Best Quality"),
+    "2160p": (1, False, "4K / Best Quality"),
+    "best": (1, False, "4K / Best Quality"),
+    "1440p": (2, False, "1440p 2K"),
+    "2k": (2, False, "1440p 2K"),
+    "480p": (5, False, "480p SD"),
+    "480": (5, False, "480p SD"),
+    "360p": (6, False, "360p Data Saver"),
+    "360": (6, False, "360p Data Saver"),
+    "mp3": (7, True, "MP3 Audio"),
+    "audio": (7, True, "MP3 Audio"),
+    "flac": (9, False, "Lossless FLAC"),
+    "opus": (10, False, "OPUS Audio"),
+    "wav": (11, False, "Raw WAV Audio"),
+}
+
+
+def handle_preset_shortcut(keyword: str, arg: str) -> bool:
+    """Handle resolution and audio shortcut commands (1080p, 720p, mp3, flac, etc.)"""
+    if keyword not in QUALITY_SHORTCUT_MAP:
+        return False
+    if not arg or not is_valid_media_url(arg):
+        print(f"{Fore.RED}[!] Usage: {keyword} <URL>{Style.RESET_ALL}")
+        return True
+
+    preset_id, force_audio, label = QUALITY_SHORTCUT_MAP[keyword]
+    url = extract_media_url(arg)
+    job = STATE.enqueue_job({
+        "url": url,
+        "preset_override": preset_id,
+        "force_audio": force_audio,
+        "needs_quality_prompt": False
+    })
+    ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
+    print(f"{Fore.GREEN}[+] Queued in {label}:{Style.RESET_ALL} {url}{ref_txt}")
+    return True
+
+
+def handle_subs_command(arg: str):
+    """Handle subtitles download command: subs <URL>"""
+    if not arg or not is_valid_media_url(arg):
+        print(f"{Fore.RED}[!] Usage: subs <URL>{Style.RESET_ALL}")
+        return
+    url = extract_media_url(arg)
+    with STATE.lock:
+        STATE.download_queue.append({"url": url, "force_subs": True, "needs_quality_prompt": False})
+    print(f"{Fore.GREEN}[+] Queued with subtitles:{Style.RESET_ALL} {url}")
+
+
+def handle_formats_command(arg: str):
+    """Handle format inspector command: f <URL> or formats <URL>"""
+    if not arg or not is_valid_media_url(arg):
+        print(f"{Fore.RED}[!] Usage: f <URL> or formats <URL>{Style.RESET_ALL}")
+        return
+    url = extract_media_url(arg)
+    custom_fmt = inspect_and_pick_formats(url)
+    if custom_fmt:
+        with STATE.lock:
+            STATE.download_queue.append({"url": url, "custom_format_str": custom_fmt, "needs_quality_prompt": False})
+        print(f"{Fore.GREEN}[+] Queued with custom format ({custom_fmt}):{Style.RESET_ALL} {url}")
+
+
+def handle_list_command(arg: str):
+    """Handle full playlist download command: list <URL>"""
+    if not arg or not is_valid_media_url(arg):
+        print(f"{Fore.RED}[!] Usage: list <URL>{Style.RESET_ALL}")
+        return
+    url = extract_media_url(arg)
+    with STATE.lock:
+        STATE.download_queue.append({
+            "url": url,
+            "force_playlist": True,
+            "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+        })
+    print(f"{Fore.GREEN}[+] Queued entire playlist:{Style.RESET_ALL} {url}")
+
+
+def handle_batch_file(file_path: Path):
+    """Handle drag-and-drop or path of a .txt file containing URLs"""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+        valid_count = 0
+        with STATE.lock:
+            for u in urls:
+                if is_valid_media_url(u):
+                    STATE.download_queue.append({"url": extract_media_url(u), "needs_quality_prompt": False})
+                    valid_count += 1
+        print(f"{Fore.GREEN}[✓] Loaded {valid_count} URLs from {file_path.name} into download queue!{Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.RED}[!] Error reading file: {e}{Style.RESET_ALL}")
+
+
+def handle_raw_urls(raw: str):
+    """Handle direct URLs, space-separated URL batches, or streaming site addresses"""
+    lower_raw = raw.strip().lower()
+    matched_site = None
+    for s_domain, s_url in KNOWN_STREAMING_DOMAINS.items():
+        if s_domain in lower_raw and not any(ext in lower_raw for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts")):
+            matched_site = s_url
+            break
+    if matched_site:
+        STATE.last_seen_website = matched_site
+        STATE.config["default_stream_referer"] = matched_site
         STATE.save_config()
-        print(f"{Fore.GREEN}[✓] Speed limit set to: {STATE.config['speed_limit'].upper()}{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}[⚡] Active Streaming Site updated to:{Style.RESET_ALL} {Fore.CYAN}{matched_site}{Style.RESET_ALL}")
+        print(f"{Fore.LIGHTYELLOW_EX}    Ready! Stream links (.m3u8) will automatically use this referer.{Style.RESET_ALL}\n")
+        return
 
-    # Trimming command: trim 01:15-02:30 <URL> or clip 10:00-15:00 <URL>
-    elif raw.startswith("trim ") or raw.startswith("clip "):
-        tokens = raw.split(maxsplit=2)
-        if len(tokens) >= 3 and is_valid_media_url(tokens[2]):
-            time_range = tokens[1]
-            url = extract_media_url(tokens[2])
-            with STATE.lock:
-                STATE.download_queue.append({
-                    "url": url,
-                    "download_section": time_range,
-                    "needs_quality_prompt": False
-                })
-            print(f"{Fore.GREEN}[+] Queued clip [{time_range}]:{Style.RESET_ALL} {url}")
-        else:
-            print(f"{Fore.RED}[!] Usage: trim <start>-<end> <URL>  (e.g. trim 01:15-02:30 https://...){Style.RESET_ALL}")
-
-    # Playlist selective items: items 1-5 <URL>
-    elif raw.startswith("items ") or raw.startswith("range "):
-        tokens = raw.split(maxsplit=2)
-        if len(tokens) >= 3 and is_valid_media_url(tokens[2]):
-            items_range = tokens[1]
-            url = extract_media_url(tokens[2])
-            with STATE.lock:
-                STATE.download_queue.append({
-                    "url": url,
-                    "playlist_items": items_range,
-                    "needs_quality_prompt": False
-                })
-            print(f"{Fore.GREEN}[+] Queued playlist tracks [{items_range}]:{Style.RESET_ALL} {url}")
-        else:
-            print(f"{Fore.RED}[!] Usage: items <range> <URL>  (e.g. items 1-5 https://...){Style.RESET_ALL}")
-
-    # Direct resolution commands
-    elif raw.startswith("1080p ") or raw.startswith("1080 "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 3, "needs_quality_prompt": False})
+    tokens = raw.split()
+    added = 0
+    for tok in tokens:
+        if is_spotify_url(tok):
+            enqueue_spotify_download(tok)
+            added += 1
+        elif is_valid_media_url(tok) or GENERIC_URL_REGEX.match(tok):
+            m_url = extract_media_url(tok)
+            job = STATE.enqueue_job({
+                "url": m_url,
+                "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+            })
             ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 1080p Full HD:{Style.RESET_ALL} {url}{ref_txt}")
+            print(f"{Fore.GREEN}[+] Queued for download:{Style.RESET_ALL} {m_url}{ref_txt}")
+            added += 1
+    if added == 0:
+        print(f"{Fore.RED}[!] Could not extract valid media URL.{Style.RESET_ALL}")
 
-    elif raw.startswith("720p ") or raw.startswith("720 "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 4, "needs_quality_prompt": False})
-            ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 720p HD:{Style.RESET_ALL} {url}{ref_txt}")
 
-    elif raw.startswith("4k ") or raw.startswith("2160p ") or raw.startswith("best "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 1, "needs_quality_prompt": False})
-            ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 4K / Best Quality:{Style.RESET_ALL} {url}{ref_txt}")
+STATIC_COMMANDS = {
+    "q": lambda: sys.exit(0),
+    "exit": lambda: sys.exit(0),
+    "quit": lambda: sys.exit(0),
+    "c": toggle_clipboard_mode,
+    "clip": toggle_clipboard_mode,
+    "p": select_preset_menu,
+    "preset": select_preset_menu,
+    "qmode": toggle_quality_prompt,
+    "ask": toggle_quality_prompt,
+    "quality": toggle_quality_prompt,
+    "o": open_downloads_folder,
+    "open": open_downloads_folder,
+    "d": change_downloads_folder,
+    "dir": change_downloads_folder,
+    "h": show_history,
+    "history": show_history,
+    "s": toggle_settings_menu,
+    "settings": toggle_settings_menu,
+    "u": update_ytdlp,
+    "update": update_ytdlp,
+    "cls": print_banner,
+    "clear": print_banner,
+    "?": print_banner,
+    "help": print_banner,
+}
 
-    elif raw.startswith("1440p ") or raw.startswith("2k "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 2, "needs_quality_prompt": False})
-            ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 1440p 2K:{Style.RESET_ALL} {url}{ref_txt}")
 
-    elif raw.startswith("480p ") or raw.startswith("480 "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 5, "needs_quality_prompt": False})
-            ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 480p SD:{Style.RESET_ALL} {url}{ref_txt}")
+def handle_user_command(user_input: str):
+    """Process an entered line from the terminal prompt using clean command dispatch"""
+    raw = user_input.strip()
+    if not raw:
+        return
 
-    elif raw.startswith("360p ") or raw.startswith("360 "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            job = STATE.enqueue_job({"url": url, "preset_override": 6, "needs_quality_prompt": False})
-            ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-            print(f"{Fore.GREEN}[+] Queued in 360p Data Saver:{Style.RESET_ALL} {url}{ref_txt}")
+    cmd_lower = raw.lower()
 
-    elif raw.startswith("mp3 ") or raw.startswith("audio "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "preset_override": 7, "force_audio": True, "needs_quality_prompt": False})
-            print(f"{Fore.GREEN}[+] Queued as MP3 Audio:{Style.RESET_ALL} {url}")
+    if cmd_lower in STATIC_COMMANDS:
+        if cmd_lower in ("q", "exit", "quit"):
+            print(f"{Fore.YELLOW}Exiting YT-DLP Terminal. Goodbye!{Style.RESET_ALL}")
+            STATE.stop_requested = True
+        STATIC_COMMANDS[cmd_lower]()
+        return
 
-    elif raw.startswith("flac "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "preset_override": 9, "needs_quality_prompt": False})
-            print(f"{Fore.GREEN}[+] Queued as Lossless FLAC:{Style.RESET_ALL} {url}")
+    first_word = raw.split()[0].lower() if " " in raw else raw.lower()
+    arg_part = raw.split(maxsplit=1)[1] if " " in raw else ""
 
-    elif raw.startswith("opus "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "preset_override": 10, "needs_quality_prompt": False})
-            print(f"{Fore.GREEN}[+] Queued as OPUS Audio:{Style.RESET_ALL} {url}")
-
-    elif raw.startswith("wav "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "preset_override": 11, "needs_quality_prompt": False})
-            print(f"{Fore.GREEN}[+] Queued as Raw WAV Audio:{Style.RESET_ALL} {url}")
-
-    elif raw.startswith("subs "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "force_subs": True, "needs_quality_prompt": False})
-            print(f"{Fore.GREEN}[+] Queued with subtitles:{Style.RESET_ALL} {url}")
-
-    elif raw.startswith("f ") or raw.startswith("formats "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            custom_fmt = inspect_and_pick_formats(url)
-            if custom_fmt:
-                with STATE.lock:
-                    STATE.download_queue.append({"url": url, "custom_format_str": custom_fmt, "needs_quality_prompt": False})
-                print(f"{Fore.GREEN}[+] Queued with custom format ({custom_fmt}):{Style.RESET_ALL} {url}")
-
-    elif raw.startswith("list "):
-        parts = raw.split(maxsplit=1)
-        if len(parts) > 1 and is_valid_media_url(parts[1]):
-            url = extract_media_url(parts[1])
-            with STATE.lock:
-                STATE.download_queue.append({"url": url, "force_playlist": True, "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)})
-            print(f"{Fore.GREEN}[+] Queued entire playlist:{Style.RESET_ALL} {url}")
-
-    # Drag & drop .txt file
+    if first_word == "spotify":
+        cmd_spotify(raw)
+    elif first_word == "cookies":
+        cmd_cookies(raw)
+    elif first_word in ("site", "website"):
+        cmd_site(raw)
+    elif first_word in ("ref", "referer"):
+        cmd_ref(raw)
+    elif first_word in ("limit", "speed"):
+        cmd_limit(raw)
+    elif first_word in ("trim", "clip") and any(ch.isdigit() for ch in arg_part):
+        cmd_trim(raw)
+    elif first_word in ("items", "range"):
+        cmd_items(raw)
+    elif handle_preset_shortcut(first_word, arg_part):
+        pass
+    elif first_word == "subs":
+        handle_subs_command(arg_part)
+    elif first_word in ("f", "formats"):
+        handle_formats_command(arg_part)
+    elif first_word == "list":
+        handle_list_command(arg_part)
     elif Path(raw.strip('"\'')).is_file() and raw.strip('"\'').lower().endswith(".txt"):
-        file_path = Path(raw.strip('"\''))
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-            valid_count = 0
-            with STATE.lock:
-                for u in urls:
-                    if is_valid_media_url(u):
-                        STATE.download_queue.append({"url": extract_media_url(u), "needs_quality_prompt": False})
-                        valid_count += 1
-            print(f"{Fore.GREEN}[✓] Loaded {valid_count} URLs from {file_path.name} into download queue!{Style.RESET_ALL}")
-        except Exception as e:
-            print(f"{Fore.RED}[!] Error reading file: {e}{Style.RESET_ALL}")
-
-    # Direct Spotify URL
+        handle_batch_file(Path(raw.strip('"\'')))
     elif is_spotify_url(raw):
         enqueue_spotify_download(raw.strip("\"'"))
-
-    # Raw URL or space-separated URLs
     elif is_valid_media_url(raw) or GENERIC_URL_REGEX.search(raw):
-        # Check if user entered a streaming site page directly (e.g. movy.sx, cinejoy.pk)
-        lower_raw = raw.strip().lower()
-        matched_site = None
-        for s_domain, s_url in KNOWN_STREAMING_DOMAINS.items():
-            if s_domain in lower_raw and not any(ext in lower_raw for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts")):
-                matched_site = s_url
-                break
-        if matched_site:
-            STATE.last_seen_website = matched_site
-            STATE.config["default_stream_referer"] = matched_site
-            STATE.save_config()
-            print(f"\n{Fore.GREEN}[⚡] Active Streaming Site updated to:{Style.RESET_ALL} {Fore.CYAN}{matched_site}{Style.RESET_ALL}")
-            print(f"{Fore.LIGHTYELLOW_EX}    Ready! Stream links (.m3u8) will automatically use this referer.{Style.RESET_ALL}\n")
-        else:
-            tokens = raw.split()
-            added = 0
-            for tok in tokens:
-                if is_spotify_url(tok):
-                    enqueue_spotify_download(tok)
-                    added += 1
-                elif is_valid_media_url(tok) or GENERIC_URL_REGEX.match(tok):
-                    m_url = extract_media_url(tok)
-                    job = STATE.enqueue_job({
-                        "url": m_url,
-                        "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
-                    })
-                    ref_txt = f" {Fore.LIGHTBLACK_EX}(Auto-Referer: {job.get('referer')}){Style.RESET_ALL}" if job.get("referer") else ""
-                    print(f"{Fore.GREEN}[+] Queued for download:{Style.RESET_ALL} {m_url}{ref_txt}")
-                    added += 1
-            if added == 0:
-                print(f"{Fore.RED}[!] Could not extract valid media URL.{Style.RESET_ALL}")
+        handle_raw_urls(raw)
     else:
         print(f"{Fore.RED}[!] Unrecognized command or invalid URL.{Style.RESET_ALL}")
         print(f"{Fore.LIGHTBLACK_EX}Type 'help' for command list, or paste a valid link directly.{Style.RESET_ALL}")
 
 
+def process_pending_events(prompt: str, line_buffer: list = None, interactive_confirm: bool = True) -> bool:
+    """
+    Checks and processes pending clipboard prompts or queued download jobs.
+    Returns True if an event was handled, False otherwise.
+    """
+    with STATE.lock:
+        has_job = bool(STATE.download_queue)
+        pending_prompt = STATE.pending_prompt_url
+        pending_ref = getattr(STATE, "pending_prompt_ref", None)
+        if pending_prompt:
+            STATE.pending_prompt_url = None
+            STATE.pending_prompt_ref = None
+
+    if pending_prompt:
+        if line_buffer is not None:
+            sys.stdout.write("\r" + " " * (len(prompt) + len(line_buffer) + 5) + "\r")
+        else:
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+
+        print(f"{Fore.LIGHTYELLOW_EX}[?] Clipboard detected link:{Style.RESET_ALL} {Fore.CYAN}{pending_prompt}{Style.RESET_ALL}")
+
+        do_download = True
+        if interactive_confirm and sys.stdin.isatty():
+            sys.stdout.write(f"{Fore.YELLOW}    Download now? ([Enter] to Download, [s] to Skip): {Style.RESET_ALL}")
+            sys.stdout.flush()
+            ans = sys.stdin.readline().strip().lower()
+            if ans in ("s", "skip", "n", "no"):
+                do_download = False
+                print(f"{Fore.LIGHTBLACK_EX}    Skipped.{Style.RESET_ALL}")
+
+        if do_download:
+            if is_spotify_url(pending_prompt):
+                enqueue_spotify_download(pending_prompt)
+            else:
+                STATE.enqueue_job({
+                    "url": pending_prompt,
+                    "referer": pending_ref,
+                    "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
+                })
+
+        sys.stdout.write(prompt + ("".join(line_buffer) if line_buffer else ""))
+        sys.stdout.flush()
+        return True
+
+    if has_job:
+        if line_buffer is not None:
+            sys.stdout.write("\r" + " " * (len(prompt) + len(line_buffer) + 5) + "\r")
+        sys.stdout.flush()
+
+        with STATE.lock:
+            job = STATE.download_queue.popleft()
+            STATE.is_downloading = True
+
+        if job.get("needs_quality_prompt", False):
+            chosen_preset, custom_fmt = prompt_video_quality(job["url"], referer=job.get("referer"))
+            if chosen_preset is None and custom_fmt is None:
+                with STATE.lock:
+                    STATE.is_downloading = False
+                sys.stdout.write(prompt + ("".join(line_buffer) if line_buffer else ""))
+                sys.stdout.flush()
+                return True
+            job["preset_override"] = chosen_preset
+            job["custom_format_str"] = custom_fmt
+
+        execute_download(job)
+
+        with STATE.lock:
+            STATE.is_downloading = False
+
+        sys.stdout.write(prompt + ("".join(line_buffer) if line_buffer else ""))
+        sys.stdout.flush()
+        return True
+
+    return False
+
+
 def get_nonblocking_line(prompt: str) -> str:
-    """
-    Non-blocking line reader using msvcrt:
-    Allows queue items, quality picker, or clipboard alerts to process seamlessly!
-    """
+    """Non-blocking line reader using msvcrt for Windows interactive console"""
     sys.stdout.write(prompt)
     sys.stdout.flush()
     line_buffer = []
 
     while not STATE.stop_requested:
-        # Check if queue has download jobs
-        with STATE.lock:
-            has_job = bool(STATE.download_queue)
-            pending_prompt = STATE.pending_prompt_url
-            pending_ref = getattr(STATE, "pending_prompt_ref", None)
-            if pending_prompt:
-                STATE.pending_prompt_url = None
-                STATE.pending_prompt_ref = None
-
-        if pending_prompt:
-            # Erase current typed line
-            sys.stdout.write("\r" + " " * (len(prompt) + len(line_buffer) + 5) + "\r")
-            sys.stdout.flush()
-            print(f"{Fore.LIGHTYELLOW_EX}[?] Clipboard detected link:{Style.RESET_ALL} {Fore.CYAN}{pending_prompt}{Style.RESET_ALL}")
-            sys.stdout.write(f"{Fore.YELLOW}    Download now? ([Enter] to Download, [s] to Skip): {Style.RESET_ALL}")
-            sys.stdout.flush()
-            ans = sys.stdin.readline().strip().lower()
-            if ans not in ("s", "skip", "n", "no"):
-                if is_spotify_url(pending_prompt):
-                    enqueue_spotify_download(pending_prompt)
-                else:
-                    STATE.enqueue_job({
-                        "url": pending_prompt,
-                        "referer": pending_ref,
-                        "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
-                    })
-            else:
-                print(f"{Fore.LIGHTBLACK_EX}    Skipped.{Style.RESET_ALL}")
-            # Re-display prompt
-            sys.stdout.write(prompt + "".join(line_buffer))
-            sys.stdout.flush()
+        if process_pending_events(prompt, line_buffer=line_buffer, interactive_confirm=True):
             continue
 
-        if has_job:
-            # Erase current prompt line temporarily
-            sys.stdout.write("\r" + " " * (len(prompt) + len(line_buffer) + 5) + "\r")
-            sys.stdout.flush()
-
-            with STATE.lock:
-                job = STATE.download_queue.popleft()
-                STATE.is_downloading = True
-
-            # If this job needs a quality prompt, ask the user now!
-            if job.get("needs_quality_prompt", False):
-                chosen_preset, custom_fmt = prompt_video_quality(job["url"], referer=job.get("referer"))
-                if chosen_preset is None and custom_fmt is None:
-                    # User skipped
-                    with STATE.lock:
-                        STATE.is_downloading = False
-                    sys.stdout.write(prompt + "".join(line_buffer))
-                    sys.stdout.flush()
-                    continue
-                job["preset_override"] = chosen_preset
-                job["custom_format_str"] = custom_fmt
-
-            execute_download(job)
-
-            with STATE.lock:
-                STATE.is_downloading = False
-
-            # Restore prompt and typed buffer
-            sys.stdout.write(prompt + "".join(line_buffer))
-            sys.stdout.flush()
-            continue
-
-        # Check for user keyboard input
         if HAS_MSVCRT and sys.stdin.isatty():
             if msvcrt.kbhit():
                 ch = msvcrt.getwch()
-
                 if ch in ("\r", "\n"):
                     sys.stdout.write("\n")
                     sys.stdout.flush()
                     return "".join(line_buffer)
-
                 elif ch == "\x08":  # Backspace
                     if line_buffer:
                         line_buffer.pop()
                         sys.stdout.write("\b \b")
                         sys.stdout.flush()
-
                 elif ch == "\x03":  # Ctrl+C
                     print(f"\n{Fore.YELLOW}Cancelled line.{Style.RESET_ALL}")
                     return ""
-
                 elif ch == "\x16":  # Ctrl+V
                     pasted = get_clipboard_text()
                     for c in pasted:
@@ -2247,12 +2283,10 @@ def get_nonblocking_line(prompt: str) -> str:
                             line_buffer.append(c)
                             sys.stdout.write(c)
                     sys.stdout.flush()
-
-                elif ch in ("\x00", "\xe0"):  # Special keys prefix
+                elif ch in ("\x00", "\xe0"):
                     if msvcrt.kbhit():
                         msvcrt.getwch()
-
-                elif ord(ch) >= 32:  # Printable character
+                elif ord(ch) >= 32:
                     line_buffer.append(ch)
                     sys.stdout.write(ch)
                     sys.stdout.flush()
@@ -2287,52 +2321,7 @@ def get_fallback_line(prompt: str, reader: TerminalLineReader) -> str:
     sys.stdout.write(prompt)
     sys.stdout.flush()
     while not STATE.stop_requested:
-        with STATE.lock:
-            has_job = bool(STATE.download_queue)
-            pending_prompt = STATE.pending_prompt_url
-            pending_ref = getattr(STATE, "pending_prompt_ref", None)
-            if pending_prompt:
-                STATE.pending_prompt_url = None
-                STATE.pending_prompt_ref = None
-
-        if pending_prompt:
-            sys.stdout.write("\n")
-            print(f"{Fore.LIGHTYELLOW_EX}[?] Clipboard detected link:{Style.RESET_ALL} {Fore.CYAN}{pending_prompt}{Style.RESET_ALL}")
-            if is_spotify_url(pending_prompt):
-                enqueue_spotify_download(pending_prompt)
-            else:
-                STATE.enqueue_job({
-                    "url": pending_prompt,
-                    "referer": pending_ref,
-                    "needs_quality_prompt": STATE.config.get("ask_quality_each_time", True)
-                })
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
-            continue
-
-        if has_job:
-            with STATE.lock:
-                job = STATE.download_queue.popleft()
-                STATE.is_downloading = True
-
-            if job.get("needs_quality_prompt", False):
-                chosen_preset, custom_fmt = prompt_video_quality(job["url"], referer=job.get("referer"))
-                if chosen_preset is None and custom_fmt is None:
-                    with STATE.lock:
-                        STATE.is_downloading = False
-                    sys.stdout.write(prompt)
-                    sys.stdout.flush()
-                    continue
-                job["preset_override"] = chosen_preset
-                job["custom_format_str"] = custom_fmt
-
-            execute_download(job)
-
-            with STATE.lock:
-                STATE.is_downloading = False
-
-            sys.stdout.write(prompt)
-            sys.stdout.flush()
+        if process_pending_events(prompt, line_buffer=None, interactive_confirm=False):
             continue
 
         if reader.input_queue:
