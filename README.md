@@ -13,14 +13,14 @@ Whenever you copy a video link from YouTube, TikTok, Instagram, Twitter/X, Reddi
 
 ## 📦 Installation & Setup
 
-### Option A: 1-Click Automated Setup (Recommended)
-If you just cloned or downloaded this repository:
-1. Double-click **`setup.bat`**.
+### Option A: 1-Click Automated Setup (Zero Prerequisites)
+If you just cloned or downloaded this repository on any Windows 10/11 PC:
+1. Simply double-click **`run.bat`** (or **`setup.bat`**).
 2. The setup wizard automatically:
-   - Verifies your Python 3.8+ environment
+   - **Auto-downloads & installs Python 3.12** if you don't have Python installed yet
    - Installs required Python dependencies (`colorama`, `pyperclip`)
    - Downloads the latest official **`yt-dlp.exe`** from GitHub
-   - Downloads and extracts **`ffmpeg.exe`** and **`ffprobe.exe`**
+   - Downloads and extracts **`ffmpeg.exe`** and **`ffprobe.exe`** (and prunes unused `ffplay.exe`)
    - Initializes `config.json` and creates your `downloads/` folder
 3. Double-click **`create_desktop_shortcut.bat`** to pin a shortcut on your Desktop!
 
