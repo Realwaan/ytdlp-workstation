@@ -94,10 +94,14 @@ def execute_download_job(
                 on_progress(job)
 
         elif status == "finished":
+            job.status = "PROCESSING"
             job.progress_pct = 100.0
             filename = d.get("filename")
             if filename:
                 job.saved_filename = Path(filename).name
+
+            if on_progress:
+                on_progress(job)
 
     opts["progress_hooks"] = [_native_hook]
 
@@ -109,6 +113,8 @@ def execute_download_job(
             if success:
                 job.status = "COMPLETED"
                 job.progress_pct = 100.0
+                if on_progress:
+                    on_progress(job)
             else:
                 job.status = "FAILED"
                 job.error_message = f"yt-dlp returned error code {ret_code}"

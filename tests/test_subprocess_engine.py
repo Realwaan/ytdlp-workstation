@@ -67,10 +67,11 @@ def test_subprocess_success_with_progress_parsing(tmp_path):
 
     assert result is True
     assert job.status == "COMPLETED"
-    assert job.progress_pct == 50.0
+    assert job.progress_pct == 100.0
     assert job.saved_filename == "video.mp4"
-    assert len(progress_calls) == 1
+    assert len(progress_calls) == 2
     assert progress_calls[0] == 50.0
+    assert progress_calls[1] == 100.0
 
 
 def test_subprocess_lenient_success_at_99_percent(tmp_path):

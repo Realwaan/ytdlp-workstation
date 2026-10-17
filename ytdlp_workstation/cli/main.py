@@ -44,6 +44,7 @@ def main(state: Optional[AppState] = None):
             job.speed_str,
             job.eta_str,
             job.fragment_str,
+            status=job.status,
         )
         sys.stdout.write(bar_text)
         sys.stdout.flush()

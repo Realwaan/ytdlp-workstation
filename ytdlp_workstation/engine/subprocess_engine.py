@@ -72,6 +72,9 @@ def run_subprocess_download(
                 job.eta_str = p_map.get("E", "--:--")
                 job.fragment_str = p_map.get("F", "")
 
+                if pct_val >= 100.0 and job.status != "PROCESSING":
+                    job.status = "PROCESSING"
+
                 set_console_title(f"[{job.progress_pct:.1f}% - {job.speed_str} - ETA {job.eta_str}] YT-DLP Workstation")
 
                 if on_progress:
@@ -96,6 +99,9 @@ def run_subprocess_download(
 
         if success:
             job.status = "COMPLETED"
+            job.progress_pct = 100.0
+            if on_progress:
+                on_progress(job)
         else:
             job.status = "FAILED"
             job.error_message = " | ".join(captured_errors[:2]) if captured_errors else f"Process exited with code {proc.returncode}"

@@ -141,8 +141,17 @@ def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
         print(f"{Back.YELLOW}{Fore.BLACK} ★ NEW YT-DLP RELEASE AVAILABLE: v{state.update_available} {Style.RESET_ALL} {Fore.YELLOW}Type 'u' or 'update' to upgrade!{Style.RESET_ALL}\n")
 
 
-def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, eta: str, f_str: str = "") -> str:
+def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, eta: str, f_str: str = "", status: str = "") -> str:
     """Format Linux CLI / tqdm style progress bar."""
+    if status == "PROCESSING":
+        return f"\r{Fore.CYAN}{title}:{Style.RESET_ALL} {Fore.YELLOW}[PROCESSING] Merging video & audio (ffmpeg)...{Style.RESET_ALL}\033[K"
+
+    if status == "COMPLETED":
+        saved = ""
+        if d_str:
+            saved = d_str
+        return f"\r{Fore.CYAN}{title}:{Style.RESET_ALL} {Fore.GREEN}[✓] COMPLETE — {saved or 'saved'}{Style.RESET_ALL}\033[K"
+
     pct = max(0.0, min(100.0, pct))
     spd = spd.strip() if spd and spd != "NA" else "--"
     eta = eta.strip() if eta and eta != "NA" else "--:--"
