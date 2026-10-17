@@ -62,21 +62,28 @@ class AppState:
     """Thread-safe application state holder."""
 
     def __init__(self):
+        from ..extractors.referer import is_valid_streaming_referer
+
         self.config_manager = ConfigManager()
         self.history_manager = HistoryManager()
         self.lock = threading.Lock()
         self.stop_requested = False
         self.update_available: Optional[str] = None
-        self.last_seen_website = self.config.get("default_stream_referer", "https://movy.sx/")
+
+        saved_ref = self.config.get("default_stream_referer", "https://movy.sx/")
+        if not is_valid_streaming_referer(saved_ref):
+            saved_ref = "https://movy.sx/"
+            self.config_manager.set("default_stream_referer", saved_ref)
+        self.last_seen_website = saved_ref
 
         self.pending_prompt_url: Optional[str] = None
         self.pending_prompt_ref: Optional[str] = None
 
         self.seen_clipboard: Set[str] = set()
 
-        # Seed seen_clipboard from history so app doesn't re-prompt old links on startup
+        # Seed seen_clipboard from successful history so app doesn't re-prompt completed links on startup
         for item in self.history_manager.get_entries(limit=100):
-            if "url" in item:
+            if "url" in item and item.get("status") == "Success":
                 self.seen_clipboard.add(item["url"].strip())
 
     @property

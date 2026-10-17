@@ -1,6 +1,6 @@
 """Tests for Cloud Streaming Referer Engine."""
 
-from ytdlp_workstation.extractors.referer import auto_detect_referer
+from ytdlp_workstation.extractors.referer import auto_detect_referer, is_valid_streaming_referer
 
 
 def test_mainstream_platforms_require_no_referer():
@@ -25,6 +25,18 @@ def test_videasy_and_peakpine_auto_attach_referer():
     url_custom = "https://videasy.net/stream/video.mp4"
     ref_custom = auto_detect_referer(url_custom, last_seen_website="https://cinejoy.pk/")
     assert ref_custom == "https://cinejoy.pk/"
+
+
+def test_poisoned_youtube_referer_falls_back_to_movy():
+    url = "https://moon.zenoak.top/vd/abc/index-s1080p-v1-a1.m3u8"
+    ref = auto_detect_referer(
+        url,
+        last_seen_website="https://www.youtube.com/",
+        default_referer="https://www.youtube.com/",
+    )
+    assert ref == "https://movy.sx/"
+    assert is_valid_streaming_referer("https://www.youtube.com/") is False
+    assert is_valid_streaming_referer("https://movy.sx/") is True
 
 
 def test_megacloud_and_rabbitstream_referers():

@@ -13,7 +13,7 @@ from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX
-from ..extractors.referer import KNOWN_STREAMING_DOMAINS
+from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
 from ..utils.system import sanitize_filename
 from .ui import Fore, Style, print_banner
@@ -107,6 +107,8 @@ def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, ref
     Must run on the main thread (it may prompt). Returns True if queued.
     """
     state = _resolve_state(state)
+    if referer is None:
+        referer = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
     job = DownloadJob(url=url, referer=referer, **job_kwargs)
     wants_prompt = state.config.get("ask_quality_each_time", True)
     if wants_prompt and job.preset_override is None and not job.custom_format_str:
@@ -272,14 +274,17 @@ def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
         return
 
     url = extract_media_url(url_in) or url_in
+    auto_ref = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
     print(f"\n{Fore.CYAN}[*] Fetching metadata for:{Style.RESET_ALL} {Fore.WHITE}{url}...{Style.RESET_ALL}")
 
     cmd = [
         str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
         "--dump-single-json",
         "--no-playlist",
-        url
     ]
+    if auto_ref:
+        cmd.extend(["--referer", auto_ref])
+    cmd.append(url)
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         if res.returncode != 0 or not res.stdout.strip():
@@ -341,13 +346,13 @@ def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
             prompt=f"{Fore.WHITE}Quick Action:{Style.RESET_ALL} [1] Best Video [2] 1080p [3] MP3 Audio [s] Skip: ",
         )
         if choice == "1":
-            queue_mgr.enqueue(DownloadJob(url=url, preset_override=1))
+            queue_mgr.enqueue(DownloadJob(url=url, referer=auto_ref, preset_override=1))
             print(f"{Fore.GREEN}[+] Queued in Best Available Quality!{Style.RESET_ALL}\n")
         elif choice == "2":
-            queue_mgr.enqueue(DownloadJob(url=url, preset_override=3))
+            queue_mgr.enqueue(DownloadJob(url=url, referer=auto_ref, preset_override=3))
             print(f"{Fore.GREEN}[+] Queued in 1080p Full HD!{Style.RESET_ALL}\n")
         elif choice == "3":
-            queue_mgr.enqueue(DownloadJob(url=url, preset_override=7, force_audio=True))
+            queue_mgr.enqueue(DownloadJob(url=url, referer=auto_ref, preset_override=7, force_audio=True))
             print(f"{Fore.GREEN}[+] Queued as 320kbps MP3 Audio!{Style.RESET_ALL}\n")
 
     except Exception as e:
@@ -414,8 +419,10 @@ def handle_preset_shortcut(keyword: str, arg: str, queue_mgr, state: Optional[Ap
 
     preset_id, force_audio, label = QUALITY_SHORTCUT_MAP[keyword]
     url = extract_media_url(arg)
+    auto_ref = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
     job = DownloadJob(
         url=url,
+        referer=auto_ref,
         preset_override=preset_id,
         force_audio=force_audio
     )

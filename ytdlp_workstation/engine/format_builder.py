@@ -18,9 +18,10 @@ __all__ = [
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
-from ..core.config import FFMPEG_EXE, BASE_DIR, DEFAULT_DOWNLOAD_DIR
+from ..core.config import FFMPEG_EXE, YTDLP_EXE, ARIA2C_EXE, BASE_DIR, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import get_preset, resolve_format_sort
 from ..core.state import DownloadJob
+from ..extractors.referer import auto_detect_referer
 
 
 def _resolve_preset(job: DownloadJob, config: Dict[str, Any]) -> Tuple[int, Dict[str, Any], str]:
@@ -50,11 +51,17 @@ def _build_output_template(
     }
 
 
-def _build_http_headers(job: DownloadJob) -> Dict[str, str]:
+def _build_http_headers(job: DownloadJob, config: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
     """Build HTTP headers dict from job referer and custom headers."""
     headers: Dict[str, str] = {}
-    if job.referer:
-        headers["Referer"] = job.referer
+    referer = job.referer
+    if not referer:
+        default_ref = (config or {}).get("default_stream_referer", "https://movy.sx/")
+        referer = auto_detect_referer(job.url, default_referer=default_ref)
+        if referer:
+            job.referer = referer
+    if referer:
+        headers["Referer"] = referer
     if job.headers:
         for h in job.headers:
             if ":" in h:
@@ -176,7 +183,7 @@ def _build_common_options(
             pass
 
     # Referer & HTTP Headers
-    http_headers = _build_http_headers(job)
+    http_headers = _build_http_headers(job, config)
     if http_headers:
         opts["http_headers"] = http_headers
 
@@ -249,7 +256,7 @@ def build_subprocess_command(
     preset = opts.pop("_preset", {})
     extra_args = opts.pop("_extra_args", [])
 
-    ytdlp_bin = str(BASE_DIR / "yt-dlp.exe") if (BASE_DIR / "yt-dlp.exe").exists() else "yt-dlp"
+    ytdlp_bin = str(YTDLP_EXE) if YTDLP_EXE.exists() else "yt-dlp"
 
     cmd: List[str] = [
         ytdlp_bin,
@@ -275,8 +282,7 @@ def build_subprocess_command(
     if FFMPEG_EXE.exists():
         cmd.extend(["--ffmpeg-location", str(FFMPEG_EXE.parent)])
 
-    aria2c_exe = BASE_DIR / "aria2c.exe"
-    if aria2c_exe.exists():
+    if ARIA2C_EXE.exists():
         cmd.extend([
             "--downloader", "aria2c",
             "--downloader", "dash,m3u8:native",

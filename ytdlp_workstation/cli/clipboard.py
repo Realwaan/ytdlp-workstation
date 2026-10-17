@@ -16,7 +16,13 @@ from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..queue.manager import QueueManager
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, clean_url
-from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
+from ..extractors.referer import (
+    auto_detect_referer,
+    is_valid_streaming_referer,
+    KNOWN_STREAMING_DOMAINS,
+    CDN_TO_REFERER_MAP,
+    MAINSTREAM_PLATFORMS,
+)
 from ..extractors.spotify import is_spotify_url
 from ..utils.clipboard import get_clipboard_text
 from ..utils.notifications import play_sound
@@ -76,18 +82,26 @@ def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] 
         last_text = current_text
         lower_txt = current_text.lower()
 
-        # Check if copied text is a streaming website URL
+        # Check if copied text is a streaming website URL (never match YouTube/Twitch/CDN/media links)
         matched_site = None
         for s_domain, s_url in KNOWN_STREAMING_DOMAINS.items():
             if s_domain in lower_txt:
                 matched_site = s_url
                 break
-        if not matched_site and any(k in lower_txt for k in ("movie", "watch", "stream", "series", "anime")) and lower_txt.startswith(("http://", "https://")):
+        if (
+            not matched_site
+            and lower_txt.startswith(("http://", "https://"))
+            and not any(p in lower_txt for p in MAINSTREAM_PLATFORMS)
+            and not any(c in lower_txt for c in CDN_TO_REFERER_MAP)
+            and any(k in lower_txt for k in ("movie", "watch", "stream", "series", "anime"))
+        ):
             parsed = urllib.parse.urlparse(current_text)
             if parsed.netloc:
-                matched_site = f"{parsed.scheme}://{parsed.netloc}/"
+                candidate = f"{parsed.scheme}://{parsed.netloc}/"
+                if is_valid_streaming_referer(candidate):
+                    matched_site = candidate
 
-        if matched_site and not any(ext in lower_txt for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts")):
+        if matched_site and not any(ext in lower_txt for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts", "/vd/", "/hls/")):
             if state.last_seen_website != matched_site:
                 state.last_seen_website = matched_site
                 state.set_config("default_stream_referer", matched_site)

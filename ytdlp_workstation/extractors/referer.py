@@ -6,11 +6,34 @@ to eliminate HTTP 403 Forbidden hotlink blocks.
 
 __all__ = [
     "auto_detect_referer",
+    "is_valid_streaming_referer",
     "CDN_TO_REFERER_MAP",
     "KNOWN_STREAMING_DOMAINS",
+    "MAINSTREAM_PLATFORMS",
 ]
 
 from typing import Optional
+
+MAINSTREAM_PLATFORMS = (
+    "youtube.com",
+    "youtu.be",
+    "twitch.tv",
+    "vimeo.com",
+    "tiktok.com",
+    "instagram.com",
+    "twitter.com",
+    "x.com",
+    "facebook.com",
+    "fb.watch",
+    "reddit.com",
+    "dailymotion.com",
+    "soundcloud.com",
+    "bilibili.com",
+    "rumble.com",
+    "bitchute.com",
+    "odysee.com",
+    "spotify.com",
+)
 
 CDN_TO_REFERER_MAP = {
     # VidEasy / Peakpine / Moon servers (used by Movy, Cinejoy, etc.)
@@ -70,6 +93,22 @@ KNOWN_STREAMING_DOMAINS = {
 }
 
 
+def is_valid_streaming_referer(site_url: Optional[str]) -> bool:
+    """Return True if site_url is a valid streaming site origin/referer (not YouTube/CDN/etc.)."""
+    if not site_url or not isinstance(site_url, str):
+        return False
+    low = site_url.strip().lower()
+    if not low.startswith(("http://", "https://")):
+        return False
+    if any(p in low for p in MAINSTREAM_PLATFORMS):
+        return False
+    if any(cdn in low for cdn in ("zenoak.top", "peakpine.top", "videasy.net")):
+        return False
+    if any(ext in low for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts", "/vd/", "/hls/")):
+        return False
+    return True
+
+
 def auto_detect_referer(url: str, last_seen_website: Optional[str] = None, default_referer: str = "https://movy.sx/") -> Optional[str]:
     """
     Intelligently deduce the required Referer for cloud video servers and m3u8 streams
@@ -80,13 +119,11 @@ def auto_detect_referer(url: str, last_seen_website: Optional[str] = None, defau
     url_lower = url.lower()
 
     # If it's a mainstream platform (YouTube, Twitch, Instagram, Twitter, etc.), no referer needed
-    if any(ign in url_lower for ign in (
-        "youtube.com", "youtu.be", "twitch.tv", "vimeo.com", "tiktok.com",
-        "instagram.com", "twitter.com", "x.com", "reddit.com", "spotify.com"
-    )):
+    if any(ign in url_lower for ign in MAINSTREAM_PLATFORMS):
         return None
 
-    active_site = last_seen_website or default_referer
+    safe_default = default_referer if is_valid_streaming_referer(default_referer) else "https://movy.sx/"
+    active_site = last_seen_website if is_valid_streaming_referer(last_seen_website) else safe_default
 
     # 1. Direct CDN / Cloud Server pattern matching
     for cdn_domain, parent_referer in CDN_TO_REFERER_MAP.items():

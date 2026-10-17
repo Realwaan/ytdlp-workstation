@@ -216,22 +216,28 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
     elif first_word in ("trim", "clip") and any(ch.isdigit() for ch in arg_part):
         tokens = raw.split(maxsplit=2)
         if len(tokens) >= 3:
-            queue_mgr.enqueue(DownloadJob(url=extract_media_url(tokens[2]) or tokens[2], download_section=tokens[1]))
+            u = extract_media_url(tokens[2]) or tokens[2]
+            auto_ref = auto_detect_referer(u, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+            queue_mgr.enqueue(DownloadJob(url=u, referer=auto_ref, download_section=tokens[1]))
             print(f"{Fore.GREEN}[+] Queued clip [{tokens[1]}]: {tokens[2]}{Style.RESET_ALL}\n")
     elif first_word in ("items", "range"):
         tokens = raw.split(maxsplit=2)
         if len(tokens) >= 3:
-            queue_mgr.enqueue(DownloadJob(url=extract_media_url(tokens[2]) or tokens[2], playlist_items=tokens[1]))
+            u = extract_media_url(tokens[2]) or tokens[2]
+            auto_ref = auto_detect_referer(u, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+            queue_mgr.enqueue(DownloadJob(url=u, referer=auto_ref, playlist_items=tokens[1]))
             print(f"{Fore.GREEN}[+] Queued playlist items [{tokens[1]}]: {tokens[2]}{Style.RESET_ALL}\n")
     elif first_word == "subs":
         tokens = raw.split(maxsplit=2)
         if len(tokens) >= 3:
             lang, u = tokens[1], extract_media_url(tokens[2]) or tokens[2]
-            queue_mgr.enqueue(DownloadJob(url=u, force_subs=True, sub_lang=lang))
+            auto_ref = auto_detect_referer(u, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+            queue_mgr.enqueue(DownloadJob(url=u, referer=auto_ref, force_subs=True, sub_lang=lang))
             print(f"{Fore.GREEN}[+] Queued with subtitles [{lang}]: {u}{Style.RESET_ALL}\n")
         elif len(tokens) == 2 and is_valid_media_url(tokens[1]):
             u = extract_media_url(tokens[1]) or tokens[1]
-            queue_mgr.enqueue(DownloadJob(url=u, force_subs=True, sub_lang="en"))
+            auto_ref = auto_detect_referer(u, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+            queue_mgr.enqueue(DownloadJob(url=u, referer=auto_ref, force_subs=True, sub_lang="en"))
             print(f"{Fore.GREEN}[+] Queued with English subtitles: {u}{Style.RESET_ALL}\n")
         else:
             print(f"{Fore.RED}[!] Usage: subs [lang] <URL>{Style.RESET_ALL}\n")
@@ -239,9 +245,10 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         u_in = arg_part.strip().strip("\"'") if arg_part else ask_text("Media URL >>> ", state).strip("\"'")
         if u_in:
             u = extract_media_url(u_in) or u_in
-            custom_fmt = inspect_and_pick_formats(u, state=state)
+            auto_ref = auto_detect_referer(u, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+            custom_fmt = inspect_and_pick_formats(u, referer=auto_ref, state=state)
             if custom_fmt:
-                queue_mgr.enqueue(DownloadJob(url=u, custom_format_str=custom_fmt))
+                queue_mgr.enqueue(DownloadJob(url=u, referer=auto_ref, custom_format_str=custom_fmt))
                 print(f"{Fore.GREEN}[+] Queued format [{custom_fmt}]: {u}{Style.RESET_ALL}\n")
     elif first_word == "cookies":
         b = arg_part.strip().lower() if arg_part else ask_text("Enter browser (chrome, edge, firefox, brave, or off): ", state).lower()
@@ -306,14 +313,21 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         enqueue_spotify_download(raw.strip("\"'"), queue_mgr, state=state)
     elif is_valid_media_url(raw) or GENERIC_URL_REGEX.search(raw):
         m_url = extract_media_url(raw) or raw
-        job = DownloadJob(url=m_url)
+        auto_ref = auto_detect_referer(m_url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+        if auto_ref:
+            print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")
+        job = DownloadJob(url=m_url, referer=auto_ref)
         if state.config.get("ask_quality_each_time", True):
-            chosen_preset, custom_fmt = prompt_video_quality(m_url, state=state)
+            chosen_preset, custom_fmt = prompt_video_quality(m_url, referer=auto_ref, state=state)
             if chosen_preset is not None or custom_fmt is not None:
                 job.preset_override = chosen_preset
                 job.custom_format_str = custom_fmt
                 queue_mgr.enqueue(job)
+                ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
+                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {m_url}{ref_note}\n")
         else:
             queue_mgr.enqueue(job)
+            ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
+            print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {m_url}{ref_note}\n")
     else:
         print(f"{Fore.RED}[!] Unrecognized command or invalid URL. Type 'help' for command list.{Style.RESET_ALL}\n")
