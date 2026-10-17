@@ -7,8 +7,13 @@
     "sound_effects": true,
     "desktop_notifications": true,
     "browser_cookies": "none",
+    "cookies_file": "none",
     "subtitles_mode": "off",
     "speed_limit": "none",
     "sponsorblock": false,
-    "media_filter_only": true
+    "media_filter_only": true,
+    "max_concurrent_downloads": 2,
+    "use_download_archive": true,
+    "codec_preference": "auto",
+    "music_engine_provider": "ytm"
 }

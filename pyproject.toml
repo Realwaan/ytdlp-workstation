@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ytdlp-workstation"
-version = "1.0.0"
-description = "Supercharged automated terminal workstation for yt-dlp with clipboard detection, Spotify downloading, and single-key quality picker."
+version = "2.0.0"
+description = "Supercharged concurrent workstation for yt-dlp with multi-worker queue, Spotify studio engine, and single-key quality picker."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -51,8 +51,12 @@ Repository = "https://github.com/Realwaan/ytdlp-workstation.git"
 Issues = "https://github.com/Realwaan/ytdlp-workstation/issues"
 
 [project.scripts]
-ytdlp-workstation = "auto_downloader:main"
-ytdlp-ws = "auto_downloader:main"
+ytdlp-workstation = "ytdlp_workstation.cli.main:main"
+ytdlp-ws = "ytdlp_workstation.cli.main:main"
 
 [tool.setuptools]
 py-modules = ["auto_downloader", "ytdlp_workstation"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ytdlp_workstation*"]

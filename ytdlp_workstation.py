@@ -1,7 +1,7 @@
 """
 ytdlp-workstation CLI entrypoint module
 """
-from auto_downloader import main
+from ytdlp_workstation.cli.main import main
 
 if __name__ == "__main__":
     main()

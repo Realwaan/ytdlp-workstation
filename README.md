@@ -86,10 +86,16 @@ Type these commands directly at the `>>> ` prompt anytime:
 |---|---|
 | *(Copy in browser)* | Detects copied URL and triggers quality picker or auto-download |
 | `<URL>` | Paste any URL directly to download |
-| `play <song/artist>` | Search YouTube & instant download top track in **320kbps MP3** with cover art |
+| `play <song/artist>` | Search YouTube Music & instant download top track in **320kbps MP3** with cover art |
 | `yt <query>` | Search YouTube and interactively pick from top 5 search results |
 | `info <URL>` | Inspect video details, max resolution, audio codecs, and subtitles before downloading |
 | `spotify <URL>` | Download Spotify track, album, or playlist in **320kbps MP3** with tags & art |
+| `queue` / `qstatus` | View real-time concurrent queue status and parallel workers |
+| `workers <1-5>` | Set number of concurrent parallel downloads *(e.g. `workers 3`)* |
+| `pause` / `resume` | Pause or resume processing of the download queue |
+| `cancel <ID>` | Cancel a pending queued download task |
+| `codec <compat/quality>` | Force H.264/AAC for TV compatibility or AV1/VP9 for maximum quality |
+| `archive [toggle/clear]` | Manage `--download-archive` duplicate blocker |
 | `trim <start>-<end> <URL>` | Download only a specific time segment *(e.g. `trim 01:15-02:30 https://...`)* |
 | `items <range> <URL>` | Download only specific playlist tracks *(e.g. `items 1-5 https://...`)* |
 | `1080p <URL>` | Download immediately in **1080p Full HD** |
@@ -270,15 +276,19 @@ Powered by `yt-dlp`:
 
 ## 📁 Repository Structure
 
-| File | Description |
+| Path | Description |
 |---|---|
-| [auto_downloader.py](file:///f:/YTDLP/auto_downloader.py) | Main application workstation terminal logic |
+| [ytdlp_workstation/](file:///f:/YTDLP/ytdlp_workstation/) | Core modular package (`core/`, `engine/`, `extractors/`, `queue/`, `utils/`, `cli/`) |
+| [tests/](file:///f:/YTDLP/tests/) | Full Pytest automated test suite (23+ unit & integration tests) |
+| [auto_downloader.py](file:///f:/YTDLP/auto_downloader.py) | Backward-compatible entrypoint forwarding to modular package |
+| [ytdlp_workstation.py](file:///f:/YTDLP/ytdlp_workstation.py) | Python module CLI entrypoint |
 | [setup.bat](file:///f:/YTDLP/setup.bat) | 1-Click setup wizard: installs pip modules, downloads `yt-dlp.exe` & `ffmpeg.exe` |
 | [run.bat](file:///f:/YTDLP/run.bat) | One-click Windows batch launcher with UTF-8 console support |
 | [create_desktop_shortcut.bat](file:///f:/YTDLP/create_desktop_shortcut.bat) | Creates an instant desktop shortcut with custom icon |
 | [create_desktop_shortcut.ps1](file:///f:/YTDLP/create_desktop_shortcut.ps1) | PowerShell script backing shortcut creation |
-| [requirements.txt](file:///f:/YTDLP/requirements.txt) | Python dependencies (`colorama`, `pyperclip`) |
-| [config.example.json](file:///f:/YTDLP/config.example.json) | Clean configuration template for new installations |
+| [pyproject.toml](file:///f:/YTDLP/pyproject.toml) | Modern PEP 621 Python package configuration (v2.0) |
+| [requirements.txt](file:///f:/YTDLP/requirements.txt) | Python dependencies (`colorama`, `pyperclip`, `yt-dlp`) |
+| [config.example.json](file:///f:/YTDLP/config.example.json) | Clean configuration template with concurrency & archive settings |
 | [.gitignore](file:///f:/YTDLP/.gitignore) | Git ignore rules excluding binaries (>100MB), personal downloads, and user logs |
 | [LICENSE](file:///f:/YTDLP/LICENSE) | Open source MIT License |
 | `downloads/` | Default folder where downloaded media and music are saved |
