@@ -3,7 +3,7 @@ Global application state and job definitions.
 Provides thread-safe coordination across background watchers, the queue engine, and terminal CLI.
 """
 
-__all__ = ["DownloadJob", "AppState", "STATE"]
+__all__ = ["DownloadJob", "AppState", "STATE", "resolve_state"]
 
 import time
 import uuid
@@ -91,3 +91,8 @@ class AppState:
 
 
 STATE = AppState()
+
+
+def resolve_state(state: Optional["AppState"] = None) -> "AppState":
+    """Return the injected state, falling back to the global singleton."""
+    return state if state is not None else STATE

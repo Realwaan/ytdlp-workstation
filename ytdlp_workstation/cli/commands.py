@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from ..core.state import STATE, DownloadJob, AppState
+from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX
@@ -17,16 +17,16 @@ from ..extractors.referer import KNOWN_STREAMING_DOMAINS
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
 from ..utils.system import sanitize_filename
 from .ui import Fore, Style, print_banner
-from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats
+from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats, ask_text
 
 
 def _resolve_state(state: Optional[AppState] = None) -> AppState:
-    return state if state is not None else STATE
+    return resolve_state(state)
 
 
 def enqueue_spotify_download(url: str, queue_mgr, state: Optional[AppState] = None) -> bool:
     """Resolve Spotify track, album, or playlist and queue for high-fidelity 320kbps download."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     print(f"\n{Fore.CYAN}[⚡] Resolving Spotify metadata...{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}{url}{Style.RESET_ALL}")
     data = resolve_spotify_url(url)
     if not data or not data.get("tracks"):
@@ -101,6 +101,26 @@ def enqueue_spotify_download(url: str, queue_mgr, state: Optional[AppState] = No
     return True
 
 
+def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, referer: Optional[str] = None, **job_kwargs) -> bool:
+    """Queue a media URL, asking for quality first when the user wants that.
+
+    Must run on the main thread (it may prompt). Returns True if queued.
+    """
+    state = _resolve_state(state)
+    job = DownloadJob(url=url, referer=referer, **job_kwargs)
+    wants_prompt = state.config.get("ask_quality_each_time", True)
+    if wants_prompt and job.preset_override is None and not job.custom_format_str:
+        preset_id, custom_fmt = prompt_video_quality(url, referer=referer, state=state)
+        if preset_id is None and custom_fmt is None:
+            return False
+        job.preset_override = preset_id
+        job.custom_format_str = custom_fmt
+    queue_mgr.enqueue(job)
+    ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {referer}){Style.RESET_ALL}" if referer else ""
+    print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}{ref_note}\n")
+    return True
+
+
 def cmd_queue_status(queue_mgr):
     """Display real-time concurrent queue status."""
     info = queue_mgr.list_jobs()
@@ -133,13 +153,13 @@ def cmd_queue_status(queue_mgr):
 
 def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Instant search & download top YouTube Music track as 320kbps MP3."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         query = parts[1].strip().strip("\"'")
     else:
         print(f"\n{Fore.CYAN}═══ 🎵 Instant Music Search ═══{Style.RESET_ALL}")
-        query = input(f"{Fore.WHITE}Enter artist or song title >>> {Style.RESET_ALL}").strip().strip("\"'")
+        query = ask_text(f"{Fore.WHITE}Enter artist or song title >>> {Style.RESET_ALL}", state).strip("\"'")
 
     if not query:
         print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
@@ -162,13 +182,13 @@ def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
 
 def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Search YouTube and interactively pick from top 5 results."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         query = parts[1].strip().strip("\"'")
     else:
         print(f"\n{Fore.CYAN}═══ 🔎 Search YouTube Videos ═══{Style.RESET_ALL}")
-        query = input(f"{Fore.WHITE}Search query >>> {Style.RESET_ALL}").strip().strip("\"'")
+        query = ask_text(f"{Fore.WHITE}Search query >>> {Style.RESET_ALL}", state).strip("\"'")
 
     if not query:
         return
@@ -215,7 +235,7 @@ def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):
         print(f"\n  {Fore.YELLOW}[a] Download ALL {len(items)} results{Style.RESET_ALL}")
         print(f"  {Fore.YELLOW}[s] Skip / Cancel{Style.RESET_ALL}\n")
 
-        choice = read_single_choice(valid_keys, default_val="s", state=state)
+        choice = read_single_choice(valid_keys, default_val="s", state=state, prompt=f"{Fore.LIGHTWHITE_EX}Pick a result: {Style.RESET_ALL}")
         if choice == "s":
             print(f"{Fore.LIGHTBLACK_EX}[!] Search cancelled.{Style.RESET_ALL}\n")
             return
@@ -239,13 +259,13 @@ def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):
 
 def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Inspect video metadata, available resolutions, audio streams, and subs."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         url_in = parts[1].strip().strip("\"'")
     else:
         print(f"\n{Fore.CYAN}═══ ℹ️ Media Information Inspector ═══{Style.RESET_ALL}")
-        url_in = input(f"{Fore.WHITE}Paste Media URL >>> {Style.RESET_ALL}").strip().strip("\"'")
+        url_in = ask_text(f"{Fore.WHITE}Paste Media URL >>> {Style.RESET_ALL}", state).strip("\"'")
 
     if not url_in or not is_valid_media_url(url_in):
         print(f"{Fore.RED}[!] Invalid media URL.{Style.RESET_ALL}\n")
@@ -316,8 +336,10 @@ def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
         print(f"{Fore.CYAN}│ {Fore.WHITE}Subs     :{Style.RESET_ALL} {Fore.YELLOW}{sub_str}{Style.RESET_ALL}")
         print(f"{Fore.CYAN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}")
 
-        print(f"{Fore.WHITE}Quick Action:{Style.RESET_ALL} [1] Best Video [2] 1080p [3] MP3 Audio [s] Skip")
-        choice = read_single_choice({"1", "2", "3", "s"}, default_val="s", state=state)
+        choice = read_single_choice(
+            {"1", "2", "3", "s"}, default_val="s", state=state,
+            prompt=f"{Fore.WHITE}Quick Action:{Style.RESET_ALL} [1] Best Video [2] 1080p [3] MP3 Audio [s] Skip: ",
+        )
         if choice == "1":
             queue_mgr.enqueue(DownloadJob(url=url, preset_override=1))
             print(f"{Fore.GREEN}[+] Queued in Best Available Quality!{Style.RESET_ALL}\n")
@@ -334,7 +356,7 @@ def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
 
 def cmd_archive_management(raw: str, state: Optional[AppState] = None):
     """View or manage download archive."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     parts = raw.split()
     archive_file = state.history_manager.archive_file
     if len(parts) > 1 and parts[1].lower() in ("clear", "reset"):
@@ -362,7 +384,7 @@ def cmd_archive_management(raw: str, state: Optional[AppState] = None):
 
 def cmd_codec(raw: str, state: Optional[AppState] = None):
     """Switch codec preference: codec [auto/compat/quality]."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     parts = raw.split()
     if len(parts) > 1:
         val = parts[1].lower()
@@ -383,7 +405,7 @@ def cmd_codec(raw: str, state: Optional[AppState] = None):
 
 def handle_preset_shortcut(keyword: str, arg: str, queue_mgr, state: Optional[AppState] = None) -> bool:
     """Handle resolution and audio shortcut commands (1080p, 720p, mp3, flac, etc.)."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     if keyword not in QUALITY_SHORTCUT_MAP:
         return False
     if not arg or not is_valid_media_url(arg):

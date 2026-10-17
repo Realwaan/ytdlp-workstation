@@ -146,6 +146,6 @@ if !EXIT_CODE! neq 0 (
 )
 
 echo.
-echo %ARROW% Press any key to close this window...
+echo !ARROW! Press any key to close this window...
 pause >nul
 exit /b !EXIT_CODE!

@@ -12,7 +12,7 @@ import threading
 import urllib.parse
 from typing import Optional
 
-from ..core.state import STATE, DownloadJob, AppState
+from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..queue.manager import QueueManager
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, clean_url
@@ -20,18 +20,35 @@ from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.spotify import is_spotify_url
 from ..utils.clipboard import get_clipboard_text
 from ..utils.notifications import play_sound
+from . import inbox
+from .console import CONSOLE
 from .input_reader import prompt_video_quality
 from .command_dispatcher import enqueue_spotify_download
 from .ui import Fore, Style
 
 
 def _resolve_state(state: Optional[AppState] = None) -> AppState:
-    return state if state is not None else STATE
+    return resolve_state(state)
+
+
+def _prompt_and_enqueue(url: str, auto_ref: Optional[str], queue_mgr: QueueManager, state: AppState) -> None:
+    chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref, state=state)
+    if chosen_preset is not None or custom_fmt is not None:
+        job = DownloadJob(
+            url=url,
+            referer=auto_ref,
+            needs_quality_prompt=True,
+            preset_override=chosen_preset,
+            custom_format_str=custom_fmt,
+        )
+        queue_mgr.enqueue(job)
+        ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
+        print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}{ref_note}\n")
 
 
 def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] = None):
     """Background thread that monitors system clipboard."""
-    state = _resolve_state()
+    state = _resolve_state(state)
     last_text = ""
     try:
         last_text = get_clipboard_text().strip()
@@ -115,15 +132,15 @@ def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] 
 
         if clip_mode == "auto":
             needs_prompt = state.config.get("ask_quality_each_time", True)
-            job = DownloadJob(url=url, referer=auto_ref, needs_quality_prompt=needs_prompt)
             if needs_prompt:
-                chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref, state=state)
-                if chosen_preset is not None or custom_fmt is not None:
-                    job.preset_override = chosen_preset
-                    job.custom_format_str = custom_fmt
-                    queue_mgr.enqueue(job)
+                if CONSOLE.prompt_active:
+                    inbox.post(_prompt_and_enqueue, url, auto_ref, queue_mgr, state)
+                else:
+                    _prompt_and_enqueue(url, auto_ref, queue_mgr, state)
             else:
+                job = DownloadJob(url=url, referer=auto_ref, needs_quality_prompt=False)
                 queue_mgr.enqueue(job)
+                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}\n")
         elif clip_mode == "prompt":
             with state.lock:
                 state.pending_prompt_url = url

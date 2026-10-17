@@ -4,9 +4,17 @@ Terminal UI: Cyber-styled banner, status dashboard, progress bar formatting, and
 
 import os
 import re
+import sys
 import shutil
 from pathlib import Path
 from typing import Tuple
+
+for _s in (getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None), sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 try:
     import colorama
@@ -18,21 +26,28 @@ except ImportError:
             return ""
     Fore = Style = Back = DummyColor()
 
-from ..core.state import STATE, DownloadJob, AppState
+from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..core.presets import PRESETS
 from ..utils.system import get_free_disk_space_gb
 from typing import Optional
+from .console import CONSOLE
 
 
 def _resolve_state(state: Optional[AppState] = None) -> AppState:
-    return state if state is not None else STATE
+    return resolve_state(state)
+
+
+def clear_screen() -> None:
+    """Clear the terminal without leaving stale live status lines behind."""
+    with CONSOLE.suspend():
+        os.system("cls" if os.name == "nt" else "clear")
 
 
 def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
     """Print the cyber-styled terminal banner and status dashboard."""
     state = _resolve_state(state)
-    os.system("cls" if os.name == "nt" else "clear")
+    clear_screen()
     preset_info = PRESETS.get(state.config.get("preset", 1), PRESETS[1])
     clip_mode = state.config.get("clipboard_mode", "auto").upper()
 
@@ -141,16 +156,23 @@ def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
         print(f"{Back.YELLOW}{Fore.BLACK} ★ NEW YT-DLP RELEASE AVAILABLE: v{state.update_available} {Style.RESET_ALL} {Fore.YELLOW}Type 'u' or 'update' to upgrade!{Style.RESET_ALL}\n")
 
 
+def _short_title(title: str, limit: int = 22) -> str:
+    clean = (title or "").replace("_", " ").replace("-", " ").strip()
+    if not clean:
+        return "Downloading"
+    return clean[: limit - 3] + "..." if len(clean) > limit else clean
+
+
 def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, eta: str, f_str: str = "", status: str = "") -> str:
     """Format Linux CLI / tqdm style progress bar."""
     if status == "PROCESSING":
-        return f"\r{Fore.CYAN}{title}:{Style.RESET_ALL} {Fore.YELLOW}[PROCESSING] Merging video & audio (ffmpeg)...{Style.RESET_ALL}\033[K"
+        return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.YELLOW}[PROCESSING] Merging video & audio (ffmpeg)...{Style.RESET_ALL}\033[K"
 
     if status == "COMPLETED":
         saved = ""
         if d_str:
             saved = d_str
-        return f"\r{Fore.CYAN}{title}:{Style.RESET_ALL} {Fore.GREEN}[✓] COMPLETE — {saved or 'saved'}{Style.RESET_ALL}\033[K"
+        return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.GREEN}[✓] COMPLETE — {saved or 'saved'}{Style.RESET_ALL}\033[K"
 
     pct = max(0.0, min(100.0, pct))
     spd = spd.strip() if spd and spd != "NA" else "--"
@@ -165,11 +187,7 @@ def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, e
     else:
         size_str = ""
 
-    clean_title = title.replace("_", " ").replace("-", " ").strip()
-    if len(clean_title) > 22:
-        clean_title = clean_title[:19] + "..."
-    elif not clean_title:
-        clean_title = "Downloading"
+    clean_title = _short_title(title)
 
     term_width = shutil.get_terminal_size((80, 20)).columns
     overhead = len(clean_title) + len(size_str) + len(eta) + len(spd) + 18
@@ -181,6 +199,41 @@ def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, e
 
     bar_gfx = f"{Fore.GREEN}{'█' * filled}{Fore.LIGHTBLACK_EX}{'░' * empty}{Style.RESET_ALL}"
     return f"\r{Fore.CYAN}{clean_title}:{Style.RESET_ALL} {Fore.LIGHTWHITE_EX}{pct:5.1f}%{Style.RESET_ALL}|{bar_gfx}| {Fore.YELLOW}{size_str}{Style.RESET_ALL} {Fore.WHITE}[{Fore.LIGHTCYAN_EX}{eta}{Fore.WHITE}, {Fore.LIGHTMAGENTA_EX}{spd}{Fore.WHITE}]{Style.RESET_ALL}\033[K"
+
+
+def job_label(job: DownloadJob) -> str:
+    return job.display_title or job.saved_filename or job.url
+
+
+def format_job_progress(job: DownloadJob) -> str:
+    """Single status line for an active job (used by the live status region)."""
+    return format_linux_bar(
+        job_label(job),
+        job.progress_pct,
+        job.downloaded_str,
+        job.total_str,
+        job.speed_str,
+        job.eta_str,
+        job.fragment_str,
+        status=job.status,
+    ).replace("\r", "").replace("\033[K", "")
+
+
+def format_job_started(job: DownloadJob, preset_name: str = "") -> str:
+    quality = f" {Fore.LIGHTBLACK_EX}({preset_name}){Style.RESET_ALL}" if preset_name else ""
+    return f"{Fore.YELLOW}[▶] Started{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {_short_title(job_label(job), 60)}{quality}"
+
+
+def format_job_result(job: DownloadJob, success: bool) -> str:
+    """Permanent one-line summary written when a job leaves the queue."""
+    name = _short_title(job.saved_filename or job_label(job), 60)
+    if success:
+        size = f" ({job.saved_filesize_str})" if job.saved_filesize_str else ""
+        return f"{Fore.GREEN}[✓] Done{Style.RESET_ALL}    {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {name}{Fore.LIGHTBLACK_EX}{size}{Style.RESET_ALL}"
+    if job.status in ("CANCELLED", "CANCELLING"):
+        return f"{Fore.LIGHTBLACK_EX}[-] Cancelled [{job.id}] {name}{Style.RESET_ALL}"
+    reason = f" — {job.error_message[:80]}" if job.error_message else ""
+    return f"{Fore.RED}[✗] Failed{Style.RESET_ALL}  {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {name}{Fore.RED}{reason}{Style.RESET_ALL}"
 
 
 def print_download_card(job: DownloadJob, preset_name: str, effective_target: str):

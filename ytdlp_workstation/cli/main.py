@@ -14,42 +14,52 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from ..core.state import STATE, DownloadJob, AppState
+from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, CONFIG_FILE, YTDLP_EXE
 from ..queue.manager import QueueManager
 from ..engine.process_supervisor import SUPERVISOR
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
-from .ui import Fore, Style, print_banner, format_linux_bar
+from .console import CONSOLE
+from .ui import Fore, Style, print_banner, format_linux_bar, format_job_progress, format_job_result
 from .repl import run_repl
 
 
 def main(state: Optional[AppState] = None):
-    state = state or STATE
+    state = resolve_state(state)
 
     if os.name == "nt":
         os.system("title YT-DLP Supercharged Workstation v2.0")
 
     bootstrap_workstation_environment()
+    CONSOLE.install()
 
     # Initialize Concurrent Queue Manager
     workers = state.config.get("max_concurrent_downloads", 2)
     queue_mgr = QueueManager(max_workers=workers, state=state)
 
     def _render_progress(job: DownloadJob):
-        bar_text = format_linux_bar(
-            job.display_title or job.saved_filename or job.url,
-            job.progress_pct,
-            job.downloaded_str,
-            job.total_str,
-            job.speed_str,
-            job.eta_str,
-            job.fragment_str,
-            status=job.status,
-        )
-        sys.stdout.write(bar_text)
-        sys.stdout.flush()
+        if CONSOLE.live:
+            CONSOLE.set_status(job.id, format_job_progress(job))
+        else:
+            bar_text = format_linux_bar(
+                job.display_title or job.saved_filename or job.url,
+                job.progress_pct,
+                job.downloaded_str,
+                job.total_str,
+                job.speed_str,
+                job.eta_str,
+                job.fragment_str,
+                status=job.status,
+            )
+            sys.stdout.write(bar_text)
+            sys.stdout.flush()
+
+    def _render_finished(job: DownloadJob, success: bool):
+        CONSOLE.clear_status(job.id)
+        print(format_job_result(job, success))
 
     queue_mgr.on_job_progress = _render_progress
+    queue_mgr.on_job_finished = _render_finished
 
     try:
         run_repl(queue_mgr, state=state)
@@ -62,6 +72,7 @@ def main(state: Optional[AppState] = None):
         # Give worker threads a moment to notice stop_requested and exit.
         for t in queue_mgr._worker_threads:
             t.join(timeout=1.0)
+        CONSOLE.uninstall()
 
 
 if __name__ == "__main__":

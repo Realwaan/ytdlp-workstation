@@ -153,8 +153,8 @@ if "%~1"=="--from-run" (
     exit /b 0
 )
 
-echo   %ARROW% Double-click 'run.bat' in the main folder to launch
-echo   %ARROW% Run 'scripts\create_desktop_shortcut.bat' to pin a Desktop icon
+echo   !ARROW! Double-click 'run.bat' in the main folder to launch
+echo   !ARROW! Run 'scripts\create_desktop_shortcut.bat' to pin a Desktop icon
 echo.
 pause
 exit /b 0
@@ -172,10 +172,10 @@ set "PY_URL=https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
 
 where curl.exe >nul 2>&1
 if %errorlevel% equ 0 (
-    echo   %ARROW% Downloading via curl...
+    echo   !ARROW! Downloading via curl...
     curl.exe -L -# -o "!PY_INSTALLER!" "!PY_URL!"
 ) else (
-    echo   %ARROW% Downloading via PowerShell...
+    echo   !ARROW! Downloading via PowerShell...
     powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('!PY_URL!', '!PY_INSTALLER!')"
 )
 
