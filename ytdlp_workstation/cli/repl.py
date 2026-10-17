@@ -12,8 +12,9 @@ import sys
 import time
 import threading
 from pathlib import Path
+from typing import Optional
 
-from ..core.state import STATE, DownloadJob
+from ..core.state import STATE, DownloadJob, AppState
 from ..core.config import YTDLP_EXE
 from ..queue.manager import QueueManager
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
@@ -31,8 +32,13 @@ if HAS_MSVCRT:
     import msvcrt
 
 
-def check_for_updates_background():
+def _resolve_state(state: Optional[AppState] = None) -> AppState:
+    return state if state is not None else STATE
+
+
+def check_for_updates_background(state: Optional[AppState] = None):
     """Background check for newer yt-dlp release."""
+    state = _resolve_state()
     def _check():
         try:
             cmd = [str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "--version"]
@@ -47,7 +53,7 @@ def check_for_updates_background():
                 data = json.loads(resp.read().decode())
                 latest_ver = data.get("tag_name", "").lstrip("v")
                 if latest_ver and latest_ver != cur_ver:
-                    STATE.update_available = latest_ver
+                    state.update_available = latest_ver
         except Exception:
             pass
 
@@ -60,14 +66,15 @@ def subprocess_check_output(cmd):
     return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
 
 
-def run_repl(queue_mgr: QueueManager):
+def run_repl(queue_mgr: QueueManager, state: Optional[AppState] = None):
     """Run the interactive REPL loop until stop_requested is set."""
-    print_banner(active_workers=queue_mgr.max_workers)
+    state = _resolve_state()
+    print_banner(active_workers=queue_mgr.max_workers, state=state)
     cleanup_orphaned_fragments()
-    check_for_updates_background()
+    check_for_updates_background(state=state)
 
     # Start clipboard watcher thread
-    watcher_t = threading.Thread(target=clipboard_watcher_thread, args=(queue_mgr,), daemon=True)
+    watcher_t = threading.Thread(target=clipboard_watcher_thread, args=(queue_mgr, state), daemon=True)
     watcher_t.start()
 
     prompt = f"{Fore.CYAN}>>> {Style.RESET_ALL}"
@@ -76,19 +83,19 @@ def run_repl(queue_mgr: QueueManager):
         fallback_reader = TerminalLineReader()
 
     try:
-        while not STATE.stop_requested:
+        while not state.stop_requested:
             if HAS_MSVCRT and sys.stdin.isatty():
-                _run_msvcrt_loop(prompt, queue_mgr)
+                _run_msvcrt_loop(prompt, queue_mgr, state)
             else:
-                _run_fallback_loop(prompt, fallback_reader, queue_mgr)
+                _run_fallback_loop(prompt, fallback_reader, queue_mgr, state)
     except (KeyboardInterrupt, EOFError):
         print(f"\n{Fore.YELLOW}Exiting YT-DLP Workstation. Goodbye!{Style.RESET_ALL}")
     finally:
-        STATE.stop_requested = True
+        state.stop_requested = True
         queue_mgr.stop_requested = True
 
 
-def _run_msvcrt_loop(prompt: str, queue_mgr: QueueManager):
+def _run_msvcrt_loop(prompt: str, queue_mgr: QueueManager, state: AppState):
     """Single iteration of the msvcrt-based Windows TTY input loop."""
     sys.stdout.write(prompt)
     sys.stdout.flush()
@@ -96,7 +103,7 @@ def _run_msvcrt_loop(prompt: str, queue_mgr: QueueManager):
     hist_idx = len(COMMAND_HISTORY)
     saved_cur = ""
 
-    while not STATE.stop_requested:
+    while not state.stop_requested:
         if msvcrt.kbhit():
             ch = msvcrt.getwch()
             if ch in ("\r", "\n"):
@@ -106,7 +113,7 @@ def _run_msvcrt_loop(prompt: str, queue_mgr: QueueManager):
                 if line_str.strip():
                     if not COMMAND_HISTORY or COMMAND_HISTORY[-1] != line_str.strip():
                         COMMAND_HISTORY.append(line_str.strip())
-                handle_user_command(line_str, queue_mgr)
+                handle_user_command(line_str, queue_mgr, state=state)
                 break
             elif ch == "\x08":  # Backspace
                 if line_buf:
@@ -147,13 +154,13 @@ def _run_msvcrt_loop(prompt: str, queue_mgr: QueueManager):
             time.sleep(0.04)
 
 
-def _run_fallback_loop(prompt: str, fallback_reader, queue_mgr: QueueManager):
+def _run_fallback_loop(prompt: str, fallback_reader, queue_mgr: QueueManager, state: AppState):
     """Single iteration of the fallback (non-TTY) input loop."""
     sys.stdout.write(prompt)
     sys.stdout.flush()
-    while not STATE.stop_requested:
+    while not state.stop_requested:
         if fallback_reader and fallback_reader.input_queue:
             line = fallback_reader.input_queue.popleft()
-            handle_user_command(line, queue_mgr)
+            handle_user_command(line, queue_mgr, state=state)
             break
         time.sleep(0.04)

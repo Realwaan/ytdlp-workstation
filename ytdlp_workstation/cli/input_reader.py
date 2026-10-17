@@ -16,18 +16,24 @@ try:
 except ImportError:
     HAS_MSVCRT = False
 
-from ..core.state import STATE
+from ..core.state import STATE, AppState
 from ..core.config import YTDLP_EXE, FFMPEG_EXE
 from ..core.presets import PRESETS
 from .ui import Fore, Style
+from typing import Optional
 
 COMMAND_HISTORY = []
 
 
-def read_single_choice(valid_chars: Set[str], default_val: str) -> str:
+def _resolve_state(state: Optional[AppState] = None) -> AppState:
+    return state if state is not None else STATE
+
+
+def read_single_choice(valid_chars: Set[str], default_val: str, state: Optional[AppState] = None) -> str:
     """Reads a single keystroke without requiring Enter, or Enter for default."""
+    state = _resolve_state()
     if HAS_MSVCRT and sys.stdin.isatty():
-        while not STATE.stop_requested:
+        while not state.stop_requested:
             if msvcrt.kbhit():
                 ch = msvcrt.getwch()
                 if ch in ("\r", "\n"):
@@ -49,8 +55,9 @@ def read_single_choice(valid_chars: Set[str], default_val: str) -> str:
         return line if line else default_val
 
 
-def inspect_and_pick_formats(url: str, referer: Optional[str] = None) -> Optional[str]:
+def inspect_and_pick_formats(url: str, referer: Optional[str] = None, state: Optional[AppState] = None) -> Optional[str]:
     """Run yt-dlp -F to show all formats and let the user pick exact format codes."""
+    state = _resolve_state()
     print(f"\n{Fore.CYAN}[*] Fetching available formats from video...{Style.RESET_ALL}\n")
     cmd = [
         str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
@@ -58,8 +65,8 @@ def inspect_and_pick_formats(url: str, referer: Optional[str] = None) -> Optiona
     ]
     if FFMPEG_EXE.exists():
         cmd.extend(["--ffmpeg-location", str(FFMPEG_EXE.parent)])
-    if STATE.config.get("browser_cookies", "none") != "none":
-        cmd.extend(["--cookies-from-browser", STATE.config["browser_cookies"]])
+    if state.config.get("browser_cookies", "none") != "none":
+        cmd.extend(["--cookies-from-browser", state.config["browser_cookies"]])
     if referer:
         cmd.extend(["--referer", referer])
     cmd.extend(["-F", url])
@@ -75,12 +82,13 @@ def inspect_and_pick_formats(url: str, referer: Optional[str] = None) -> Optiona
     return chosen if chosen else "bv*+ba/b"
 
 
-def prompt_video_quality(url: str, referer: Optional[str] = None) -> Tuple[Optional[int], Optional[str]]:
+def prompt_video_quality(url: str, referer: Optional[str] = None, state: Optional[AppState] = None) -> Tuple[Optional[int], Optional[str]]:
     """
     Interactive Video Quality Picker:
     Single-keystroke selection: Press 1-9, a, b, 0, f, s, or Enter for default!
     """
-    default_pid = STATE.config.get("preset", 1)
+    state = _resolve_state()
+    default_pid = state.config.get("preset", 1)
     default_name = PRESETS.get(default_pid, PRESETS[1])["name"]
 
     print(f"\n{Fore.CYAN}╔═══════════════════════════════════════════════════════════════════════╗{Style.RESET_ALL}")
@@ -137,14 +145,15 @@ def prompt_video_quality(url: str, referer: Optional[str] = None) -> Tuple[Optio
 
 class TerminalLineReader:
     """Background stdin reader for non-TTY terminals (VS Code, Cursor, Git Bash)."""
-    def __init__(self):
+    def __init__(self, state: Optional[AppState] = None):
         import threading
+        self.state = _resolve_state(state)
         self.input_queue = collections.deque()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def _run(self):
-        while not STATE.stop_requested:
+        while not self.state.stop_requested:
             try:
                 line = sys.stdin.readline()
                 if not line:

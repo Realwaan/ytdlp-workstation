@@ -12,8 +12,9 @@ import os
 import sys
 import threading
 from pathlib import Path
+from typing import Optional
 
-from ..core.state import STATE, DownloadJob
+from ..core.state import STATE, DownloadJob, AppState
 from ..core.config import DEFAULT_DOWNLOAD_DIR, CONFIG_FILE, YTDLP_EXE
 from ..queue.manager import QueueManager
 from ..engine.process_supervisor import SUPERVISOR
@@ -22,15 +23,17 @@ from .ui import Fore, Style, print_banner, format_linux_bar
 from .repl import run_repl
 
 
-def main():
+def main(state: Optional[AppState] = None):
+    state = state or STATE
+
     if os.name == "nt":
         os.system("title YT-DLP Supercharged Workstation v2.0")
 
     bootstrap_workstation_environment()
 
     # Initialize Concurrent Queue Manager
-    workers = STATE.config.get("max_concurrent_downloads", 2)
-    queue_mgr = QueueManager(max_workers=workers)
+    workers = state.config.get("max_concurrent_downloads", 2)
+    queue_mgr = QueueManager(max_workers=workers, state=state)
 
     def _render_progress(job: DownloadJob):
         bar_text = format_linux_bar(
@@ -48,9 +51,9 @@ def main():
     queue_mgr.on_job_progress = _render_progress
 
     try:
-        run_repl(queue_mgr)
+        run_repl(queue_mgr, state=state)
     finally:
-        STATE.stop_requested = True
+        state.stop_requested = True
         queue_mgr.stop_requested = True
         # Reap all supervised subprocesses (yt-dlp, ffmpeg, aria2c) to avoid
         # orphaned processes holding file locks on Windows.

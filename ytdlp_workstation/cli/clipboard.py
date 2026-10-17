@@ -10,8 +10,9 @@ __all__ = ["clipboard_watcher_thread"]
 import time
 import threading
 import urllib.parse
+from typing import Optional
 
-from ..core.state import STATE, DownloadJob
+from ..core.state import STATE, DownloadJob, AppState
 from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..queue.manager import QueueManager
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, clean_url
@@ -24,17 +25,22 @@ from .command_dispatcher import enqueue_spotify_download
 from .ui import Fore, Style
 
 
-def clipboard_watcher_thread(queue_mgr: QueueManager):
+def _resolve_state(state: Optional[AppState] = None) -> AppState:
+    return state if state is not None else STATE
+
+
+def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] = None):
     """Background thread that monitors system clipboard."""
+    state = _resolve_state()
     last_text = ""
     try:
         last_text = get_clipboard_text().strip()
     except Exception:
         pass
 
-    while not STATE.stop_requested:
+    while not state.stop_requested:
         time.sleep(0.4)
-        clip_mode = STATE.config.get("clipboard_mode", "auto")
+        clip_mode = state.config.get("clipboard_mode", "auto")
         if clip_mode == "off":
             continue
 
@@ -65,10 +71,10 @@ def clipboard_watcher_thread(queue_mgr: QueueManager):
                 matched_site = f"{parsed.scheme}://{parsed.netloc}/"
 
         if matched_site and not any(ext in lower_txt for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts")):
-            if STATE.last_seen_website != matched_site:
-                STATE.last_seen_website = matched_site
-                STATE.set_config("default_stream_referer", matched_site)
-                play_sound("notice", enabled=STATE.config.get("sound_effects", True))
+            if state.last_seen_website != matched_site:
+                state.last_seen_website = matched_site
+                state.set_config("default_stream_referer", matched_site)
+                play_sound("notice", enabled=state.config.get("sound_effects", True))
                 print(f"\n{Fore.GREEN}[⚡] Auto-detected Active Streaming Site:{Style.RESET_ALL} {Fore.CYAN}{matched_site}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}(Stream links will auto-use this referer){Style.RESET_ALL}\n")
             continue
 
@@ -76,42 +82,42 @@ def clipboard_watcher_thread(queue_mgr: QueueManager):
         if is_spotify_url(current_text):
             m_url = extract_media_url(current_text) or current_text
             clean = clean_url(m_url)
-            with STATE.lock:
-                if clean in STATE.seen_clipboard:
+            with state.lock:
+                if clean in state.seen_clipboard:
                     continue
-                STATE.seen_clipboard.add(clean)
-            play_sound("notice", enabled=STATE.config.get("sound_effects", True))
+                state.seen_clipboard.add(clean)
+            play_sound("notice", enabled=state.config.get("sound_effects", True))
             print(f"\n{Fore.GREEN}[⚡] Auto-detected Spotify link on Clipboard!{Style.RESET_ALL} {Fore.CYAN}{m_url}{Style.RESET_ALL}")
             if clip_mode == "auto":
-                enqueue_spotify_download(m_url, queue_mgr)
+                enqueue_spotify_download(m_url, queue_mgr, state=state)
             elif clip_mode == "prompt":
-                with STATE.lock:
-                    STATE.pending_prompt_url = m_url
-                    STATE.pending_prompt_ref = None
+                with state.lock:
+                    state.pending_prompt_url = m_url
+                    state.pending_prompt_ref = None
             continue
 
         # Check media URL
-        if not is_valid_media_url(current_text, media_filter_only=STATE.config.get("media_filter_only", True)):
+        if not is_valid_media_url(current_text, media_filter_only=state.config.get("media_filter_only", True)):
             continue
 
         url = extract_media_url(current_text) or current_text
         clean = clean_url(url)
 
-        with STATE.lock:
-            if clean in STATE.seen_clipboard:
+        with state.lock:
+            if clean in state.seen_clipboard:
                 continue
-            STATE.seen_clipboard.add(clean)
+            state.seen_clipboard.add(clean)
 
-        play_sound("notice", enabled=STATE.config.get("sound_effects", True))
-        auto_ref = auto_detect_referer(url, last_seen_website=STATE.last_seen_website, default_referer=STATE.config.get("default_stream_referer", "https://movy.sx/"))
+        play_sound("notice", enabled=state.config.get("sound_effects", True))
+        auto_ref = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
         if auto_ref:
             print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")
 
         if clip_mode == "auto":
-            needs_prompt = STATE.config.get("ask_quality_each_time", True)
+            needs_prompt = state.config.get("ask_quality_each_time", True)
             job = DownloadJob(url=url, referer=auto_ref, needs_quality_prompt=needs_prompt)
             if needs_prompt:
-                chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref)
+                chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref, state=state)
                 if chosen_preset is not None or custom_fmt is not None:
                     job.preset_override = chosen_preset
                     job.custom_format_str = custom_fmt
@@ -119,6 +125,6 @@ def clipboard_watcher_thread(queue_mgr: QueueManager):
             else:
                 queue_mgr.enqueue(job)
         elif clip_mode == "prompt":
-            with STATE.lock:
-                STATE.pending_prompt_url = url
-                STATE.pending_prompt_ref = auto_ref
+            with state.lock:
+                state.pending_prompt_url = url
+                state.pending_prompt_ref = auto_ref

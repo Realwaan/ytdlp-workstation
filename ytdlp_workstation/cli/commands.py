@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from ..core.state import STATE, DownloadJob
+from ..core.state import STATE, DownloadJob, AppState
 from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX
@@ -20,8 +20,13 @@ from .ui import Fore, Style, print_banner
 from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats
 
 
-def enqueue_spotify_download(url: str, queue_mgr) -> bool:
+def _resolve_state(state: Optional[AppState] = None) -> AppState:
+    return state if state is not None else STATE
+
+
+def enqueue_spotify_download(url: str, queue_mgr, state: Optional[AppState] = None) -> bool:
     """Resolve Spotify track, album, or playlist and queue for high-fidelity 320kbps download."""
+    state = _resolve_state()
     print(f"\n{Fore.CYAN}[⚡] Resolving Spotify metadata...{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}{url}{Style.RESET_ALL}")
     data = resolve_spotify_url(url)
     if not data or not data.get("tracks"):
@@ -35,7 +40,7 @@ def enqueue_spotify_download(url: str, queue_mgr) -> bool:
     total = len(tracks)
     thumbnail = data.get("thumbnail", "")
 
-    download_dir = Path(STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    download_dir = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
     download_dir.mkdir(parents=True, exist_ok=True)
 
     target_folder = download_dir
@@ -55,7 +60,7 @@ def enqueue_spotify_download(url: str, queue_mgr) -> bool:
     print(f"{Fore.GREEN}│ {Fore.WHITE}Save In:{Style.RESET_ALL} {Fore.CYAN}{target_folder}{Style.RESET_ALL}")
     print(f"{Fore.GREEN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}\n")
 
-    provider = STATE.config.get("music_engine_provider", "ytm")
+    provider = state.config.get("music_engine_provider", "ytm")
 
     for idx, t in enumerate(tracks, 1):
         t_title = t["title"]
@@ -126,8 +131,9 @@ def cmd_queue_status(queue_mgr):
     print(f"{Fore.LIGHTBLACK_EX}Commands: 'pause', 'resume', 'cancel <id>', 'workers <n>', 'clearqueue'{Style.RESET_ALL}\n")
 
 
-def cmd_play(raw: str, queue_mgr):
+def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Instant search & download top YouTube Music track as 320kbps MP3."""
+    state = _resolve_state()
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         query = parts[1].strip().strip("\"'")
@@ -139,7 +145,7 @@ def cmd_play(raw: str, queue_mgr):
         print(f"{Fore.LIGHTBLACK_EX}[!] Cancelled.{Style.RESET_ALL}\n")
         return
 
-    provider = STATE.config.get("music_engine_provider", "ytm")
+    provider = state.config.get("music_engine_provider", "ytm")
     prefix = "ytmsearch1:" if provider == "ytm" else "ytsearch1:"
     search_target = f"{prefix}{query} Audio"
 
@@ -154,8 +160,9 @@ def cmd_play(raw: str, queue_mgr):
     print(f"{Fore.LIGHTBLACK_EX}    Queued top match as 320kbps MP3 with album artwork.{Style.RESET_ALL}\n")
 
 
-def cmd_search(raw: str, queue_mgr):
+def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Search YouTube and interactively pick from top 5 results."""
+    state = _resolve_state()
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         query = parts[1].strip().strip("\"'")
@@ -208,7 +215,7 @@ def cmd_search(raw: str, queue_mgr):
         print(f"\n  {Fore.YELLOW}[a] Download ALL {len(items)} results{Style.RESET_ALL}")
         print(f"  {Fore.YELLOW}[s] Skip / Cancel{Style.RESET_ALL}\n")
 
-        choice = read_single_choice(valid_keys, default_val="s")
+        choice = read_single_choice(valid_keys, default_val="s", state=state)
         if choice == "s":
             print(f"{Fore.LIGHTBLACK_EX}[!] Search cancelled.{Style.RESET_ALL}\n")
             return
@@ -230,8 +237,9 @@ def cmd_search(raw: str, queue_mgr):
         print(f"{Fore.RED}[!] Search error: {e}{Style.RESET_ALL}\n")
 
 
-def cmd_inspect(raw: str, queue_mgr):
+def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
     """Inspect video metadata, available resolutions, audio streams, and subs."""
+    state = _resolve_state()
     parts = raw.split(maxsplit=1)
     if len(parts) > 1:
         url_in = parts[1].strip().strip("\"'")
@@ -309,7 +317,7 @@ def cmd_inspect(raw: str, queue_mgr):
         print(f"{Fore.CYAN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}")
 
         print(f"{Fore.WHITE}Quick Action:{Style.RESET_ALL} [1] Best Video [2] 1080p [3] MP3 Audio [s] Skip")
-        choice = read_single_choice({"1", "2", "3", "s"}, default_val="s")
+        choice = read_single_choice({"1", "2", "3", "s"}, default_val="s", state=state)
         if choice == "1":
             queue_mgr.enqueue(DownloadJob(url=url, preset_override=1))
             print(f"{Fore.GREEN}[+] Queued in Best Available Quality!{Style.RESET_ALL}\n")
@@ -324,15 +332,16 @@ def cmd_inspect(raw: str, queue_mgr):
         print(f"{Fore.RED}[!] Inspector error: {e}{Style.RESET_ALL}\n")
 
 
-def cmd_archive_management(raw: str):
+def cmd_archive_management(raw: str, state: Optional[AppState] = None):
     """View or manage download archive."""
+    state = _resolve_state()
     parts = raw.split()
-    archive_file = STATE.history_manager.archive_file
+    archive_file = state.history_manager.archive_file
     if len(parts) > 1 and parts[1].lower() in ("clear", "reset"):
         try:
             if archive_file.exists():
                 archive_file.unlink()
-            STATE.history_manager._archive_cache.clear()
+            state.history_manager._archive_cache.clear()
             print(f"\n{Fore.GREEN}[✓] Download archive cleared!{Style.RESET_ALL}\n")
         except Exception as e:
             print(f"{Fore.RED}[!] Could not clear archive: {e}{Style.RESET_ALL}\n")
@@ -340,39 +349,41 @@ def cmd_archive_management(raw: str):
 
     print(f"\n{Fore.CYAN}═══ 💾 DOWNLOAD ARCHIVE TRACKER ═══{Style.RESET_ALL}")
     print(f"File: {Fore.YELLOW}{archive_file}{Style.RESET_ALL}")
-    count = len(STATE.history_manager._archive_cache)
+    count = len(state.history_manager._archive_cache)
     print(f"Total Archived Video IDs: {Fore.GREEN}{count} items{Style.RESET_ALL}")
-    status = "ACTIVE (Duplicate downloads are instantly skipped)" if STATE.config.get("use_download_archive", True) else "OFF"
-    print(f"Status: {Fore.GREEN if STATE.config.get('use_download_archive', True) else Fore.RED}{status}{Style.RESET_ALL}")
+    status = "ACTIVE (Duplicate downloads are instantly skipped)" if state.config.get("use_download_archive", True) else "OFF"
+    print(f"Status: {Fore.GREEN if state.config.get('use_download_archive', True) else Fore.RED}{status}{Style.RESET_ALL}")
     print(f"{Fore.LIGHTBLACK_EX}Commands: 'archive toggle' to enable/disable, 'archive clear' to reset.{Style.RESET_ALL}\n")
     if len(parts) > 1 and parts[1].lower() == "toggle":
-        cur = STATE.config.get("use_download_archive", True)
-        STATE.set_config("use_download_archive", not cur)
+        cur = state.config.get("use_download_archive", True)
+        state.set_config("use_download_archive", not cur)
         print(f"{Fore.GREEN}[✓] Archive duplicate skipping is now: {'ON' if not cur else 'OFF'}{Style.RESET_ALL}\n")
 
 
-def cmd_codec(raw: str):
+def cmd_codec(raw: str, state: Optional[AppState] = None):
     """Switch codec preference: codec [auto/compat/quality]."""
+    state = _resolve_state()
     parts = raw.split()
     if len(parts) > 1:
         val = parts[1].lower()
         if val in ("compat", "compatibility", "h264", "mp4"):
-            STATE.set_config("codec_preference", "compatibility")
+            state.set_config("codec_preference", "compatibility")
             print(f"\n{Fore.GREEN}[✓] Codec preference set to: COMPATIBILITY (Forces H.264 + AAC for TV/editor compatibility){Style.RESET_ALL}\n")
         elif val in ("quality", "av1", "vp9"):
-            STATE.set_config("codec_preference", "quality")
+            state.set_config("codec_preference", "quality")
             print(f"\n{Fore.GREEN}[✓] Codec preference set to: MAXIMUM QUALITY (Prefers AV1/VP9 next-gen video){Style.RESET_ALL}\n")
         else:
-            STATE.set_config("codec_preference", "auto")
+            state.set_config("codec_preference", "auto")
             print(f"\n{Fore.GREEN}[✓] Codec preference set to: AUTO (Default yt-dlp format resolution){Style.RESET_ALL}\n")
     else:
-        cur = STATE.config.get("codec_preference", "auto").upper()
+        cur = state.config.get("codec_preference", "auto").upper()
         print(f"\n{Fore.CYAN}Current Codec Preference: {Fore.GREEN}{cur}{Style.RESET_ALL}")
         print("Options: 'codec compat' (H.264/AAC for smart TVs), 'codec quality' (AV1/VP9), 'codec auto'\n")
 
 
-def handle_preset_shortcut(keyword: str, arg: str, queue_mgr) -> bool:
+def handle_preset_shortcut(keyword: str, arg: str, queue_mgr, state: Optional[AppState] = None) -> bool:
     """Handle resolution and audio shortcut commands (1080p, 720p, mp3, flac, etc.)."""
+    state = _resolve_state()
     if keyword not in QUALITY_SHORTCUT_MAP:
         return False
     if not arg or not is_valid_media_url(arg):

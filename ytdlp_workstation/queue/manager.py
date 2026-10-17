@@ -10,7 +10,7 @@ import threading
 import collections
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
-from ..core.state import DownloadJob, STATE
+from ..core.state import DownloadJob, STATE, AppState
 from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..core.presets import get_preset
 from ..engine.native_engine import execute_download_job
@@ -21,7 +21,8 @@ from ..utils.notifications import play_sound, send_windows_toast
 class QueueManager:
     """Thread-safe multi-worker concurrent download queue."""
 
-    def __init__(self, max_workers: int = 2):
+    def __init__(self, max_workers: int = 2, state: Optional[AppState] = None):
+        self.state = state or STATE
         self.max_workers = max_workers
         self.lock = threading.Lock()
         self.pending_queue: collections.deque[DownloadJob] = collections.deque()
@@ -61,8 +62,8 @@ class QueueManager:
 
     def _process_job(self, job: DownloadJob):
         """Execute job and invoke post-download lifecycle hooks."""
-        config = STATE.config
-        archive_path = STATE.history_manager.archive_path if config.get("use_download_archive", True) else None
+        config = self.state.config
+        archive_path = self.state.history_manager.archive_path if config.get("use_download_archive", True) else None
 
         preset_id = job.preset_override or config.get("preset", 1)
         preset_name = get_preset(preset_id)["name"]
@@ -119,7 +120,7 @@ class QueueManager:
             play_sound("success", enabled=config.get("sound_effects", True))
             send_windows_toast("Download Complete!", f"{saved_name} ({duration}s)", enabled=config.get("desktop_notifications", True))
 
-            STATE.history_manager.add_entry({
+            self.state.history_manager.add_entry({
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "url": job.url,
                 "title": saved_name,
@@ -132,7 +133,7 @@ class QueueManager:
             play_sound("error", enabled=config.get("sound_effects", True))
             send_windows_toast("Download Failed", job.error_message or "Unknown error", enabled=config.get("desktop_notifications", True))
 
-            STATE.history_manager.add_entry({
+            self.state.history_manager.add_entry({
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "url": job.url,
                 "preset": preset_name,
@@ -200,4 +201,4 @@ class QueueManager:
         """Update worker concurrency cap."""
         n = max(1, min(5, n))
         self.max_workers = n
-        STATE.set_config("max_concurrent_downloads", n)
+        self.state.set_config("max_concurrent_downloads", n)

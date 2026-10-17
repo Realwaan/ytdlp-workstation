@@ -18,17 +18,23 @@ except ImportError:
             return ""
     Fore = Style = Back = DummyColor()
 
-from ..core.state import STATE, DownloadJob
+from ..core.state import STATE, DownloadJob, AppState
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..core.presets import PRESETS
 from ..utils.system import get_free_disk_space_gb
+from typing import Optional
 
 
-def print_banner(active_workers: int = 1):
+def _resolve_state(state: Optional[AppState] = None) -> AppState:
+    return state if state is not None else STATE
+
+
+def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
     """Print the cyber-styled terminal banner and status dashboard."""
+    state = _resolve_state(state)
     os.system("cls" if os.name == "nt" else "clear")
-    preset_info = PRESETS.get(STATE.config.get("preset", 1), PRESETS[1])
-    clip_mode = STATE.config.get("clipboard_mode", "auto").upper()
+    preset_info = PRESETS.get(state.config.get("preset", 1), PRESETS[1])
+    clip_mode = state.config.get("clipboard_mode", "auto").upper()
 
     if clip_mode == "AUTO":
         clip_badge = f"{Back.GREEN}{Fore.BLACK} ACTIVE (AUTO-DETECT) {Style.RESET_ALL}"
@@ -37,28 +43,28 @@ def print_banner(active_workers: int = 1):
     else:
         clip_badge = f"{Back.RED}{Fore.WHITE} DISABLED {Style.RESET_ALL}"
 
-    ask_quality = STATE.config.get("ask_quality_each_time", True)
+    ask_quality = state.config.get("ask_quality_each_time", True)
     if ask_quality:
         quality_badge = f"{Back.MAGENTA}{Fore.WHITE} PICK ON DOWNLOAD {Style.RESET_ALL} {Fore.LIGHTMAGENTA_EX}(Single-key choices per link){Style.RESET_ALL}"
     else:
-        quality_badge = f"{Back.BLUE}{Fore.WHITE} AUTO USE PRESET {Style.RESET_ALL} {Fore.GREEN}#{STATE.config.get('preset', 1)} ({preset_info['name']}){Style.RESET_ALL}"
+        quality_badge = f"{Back.BLUE}{Fore.WHITE} AUTO USE PRESET {Style.RESET_ALL} {Fore.GREEN}#{state.config.get('preset', 1)} ({preset_info['name']}){Style.RESET_ALL}"
 
-    cookies_mode = STATE.config.get("browser_cookies", "none").upper()
+    cookies_mode = state.config.get("browser_cookies", "none").upper()
     cookies_badge = f"{Fore.GREEN}{cookies_mode}{Style.RESET_ALL}" if cookies_mode != "NONE" else f"{Fore.LIGHTBLACK_EX}NONE{Style.RESET_ALL}"
 
-    subs_mode = STATE.config.get("subtitles_mode", "off").upper()
+    subs_mode = state.config.get("subtitles_mode", "off").upper()
     subs_badge = f"{Fore.GREEN}{subs_mode}{Style.RESET_ALL}" if subs_mode != "OFF" else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
 
-    speed_limit = STATE.config.get("speed_limit", "none").upper()
+    speed_limit = state.config.get("speed_limit", "none").upper()
     speed_badge = f"{Fore.YELLOW}{speed_limit}{Style.RESET_ALL}" if speed_limit != "NONE" else f"{Fore.LIGHTBLACK_EX}UNLIMITED{Style.RESET_ALL}"
 
-    sb_mode = STATE.config.get("sponsorblock", False)
+    sb_mode = state.config.get("sponsorblock", False)
     sb_badge = f"{Fore.GREEN}ON{Style.RESET_ALL}" if sb_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
 
-    archive_mode = STATE.config.get("use_download_archive", True)
+    archive_mode = state.config.get("use_download_archive", True)
     archive_badge = f"{Fore.GREEN}ACTIVE (Skip Duplicates){Style.RESET_ALL}" if archive_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
 
-    download_folder = Path(STATE.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    download_folder = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
     free_gb = get_free_disk_space_gb(download_folder)
     if free_gb >= 10.0:
         disk_badge = f"{Fore.GREEN}{free_gb} GB Free{Style.RESET_ALL}"
@@ -68,8 +74,8 @@ def print_banner(active_workers: int = 1):
         disk_badge = f"{Fore.LIGHTBLACK_EX}Available{Style.RESET_ALL}"
 
     engine_badge = f"{Back.CYAN}{Fore.BLACK} 16x GIGABIT TURBO (ARIA2C + NATIVE MULTI-STREAM) {Style.RESET_ALL}" if ARIA2C_EXE.exists() else f"{Back.GREEN}{Fore.BLACK} NATIVE YOUTUBEDL ENGINE {Style.RESET_ALL}"
-    active_site = getattr(STATE, "last_seen_website", None) or STATE.config.get("default_stream_referer", "https://movy.sx/")
-    workers_cnt = STATE.config.get("max_concurrent_downloads", 2)
+    active_site = getattr(state, "last_seen_website", None) or state.config.get("default_stream_referer", "https://movy.sx/")
+    workers_cnt = state.config.get("max_concurrent_downloads", 2)
 
     banner = f"""{Fore.CYAN}
   ██╗   ██╗████████╗   ██████╗ ██╗     ██████╗ 
@@ -131,8 +137,8 @@ def print_banner(active_workers: int = 1):
 """
     print(banner)
 
-    if STATE.update_available:
-        print(f"{Back.YELLOW}{Fore.BLACK} ★ NEW YT-DLP RELEASE AVAILABLE: v{STATE.update_available} {Style.RESET_ALL} {Fore.YELLOW}Type 'u' or 'update' to upgrade!{Style.RESET_ALL}\n")
+    if state.update_available:
+        print(f"{Back.YELLOW}{Fore.BLACK} ★ NEW YT-DLP RELEASE AVAILABLE: v{state.update_available} {Style.RESET_ALL} {Fore.YELLOW}Type 'u' or 'update' to upgrade!{Style.RESET_ALL}\n")
 
 
 def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, eta: str, f_str: str = "") -> str:
