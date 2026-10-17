@@ -2,6 +2,8 @@
 Subprocess execution engine for aria2c gigabit turbo and external downloader tasks.
 """
 
+__all__ = ["run_subprocess_download"]
+
 import sys
 import time
 import subprocess
@@ -11,6 +13,7 @@ from ..core.state import DownloadJob
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..utils.system import cleanup_orphaned_fragments, set_console_title, reset_console_title
 from .format_builder import build_subprocess_command
+from .process_supervisor import SUPERVISOR
 
 
 def run_subprocess_download(
@@ -37,8 +40,14 @@ def run_subprocess_download(
             errors="replace",
             bufsize=1
         )
+        SUPERVISOR.register(job.id, proc)
 
         for raw_line in proc.stdout:
+            if job.is_cancelled.is_set():
+                SUPERVISOR.kill_job_process(job.id)
+                job.status = "CANCELLED"
+                return False
+
             line = raw_line.strip()
             if not line:
                 continue

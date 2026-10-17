@@ -1,0 +1,124 @@
+"""
+Clipboard watcher thread.
+
+Monitors the system clipboard for media URLs and Spotify links, auto-enqueuing
+downloads when clipboard mode is set to "auto". Extracted from cli/main.py.
+"""
+
+__all__ = ["clipboard_watcher_thread"]
+
+import time
+import threading
+import urllib.parse
+
+from ..core.state import STATE, DownloadJob
+from ..core.config import DEFAULT_DOWNLOAD_DIR
+from ..queue.manager import QueueManager
+from ..extractors.url_detector import is_valid_media_url, extract_media_url, clean_url
+from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
+from ..extractors.spotify import is_spotify_url
+from ..utils.clipboard import get_clipboard_text
+from ..utils.notifications import play_sound
+from .input_reader import prompt_video_quality
+from .command_dispatcher import enqueue_spotify_download
+from .ui import Fore, Style
+
+
+def clipboard_watcher_thread(queue_mgr: QueueManager):
+    """Background thread that monitors system clipboard."""
+    last_text = ""
+    try:
+        last_text = get_clipboard_text().strip()
+    except Exception:
+        pass
+
+    while not STATE.stop_requested:
+        time.sleep(0.4)
+        clip_mode = STATE.config.get("clipboard_mode", "auto")
+        if clip_mode == "off":
+            continue
+
+        try:
+            current_text = get_clipboard_text()
+        except Exception:
+            continue
+
+        if not current_text or not isinstance(current_text, str):
+            continue
+
+        current_text = current_text.strip()
+        if current_text == last_text:
+            continue
+
+        last_text = current_text
+        lower_txt = current_text.lower()
+
+        # Check if copied text is a streaming website URL
+        matched_site = None
+        for s_domain, s_url in KNOWN_STREAMING_DOMAINS.items():
+            if s_domain in lower_txt:
+                matched_site = s_url
+                break
+        if not matched_site and any(k in lower_txt for k in ("movie", "watch", "stream", "series", "anime")) and lower_txt.startswith(("http://", "https://")):
+            parsed = urllib.parse.urlparse(current_text)
+            if parsed.netloc:
+                matched_site = f"{parsed.scheme}://{parsed.netloc}/"
+
+        if matched_site and not any(ext in lower_txt for ext in (".mp4", ".m3u8", ".webm", ".mkv", ".mpd", ".ts")):
+            if STATE.last_seen_website != matched_site:
+                STATE.last_seen_website = matched_site
+                STATE.set_config("default_stream_referer", matched_site)
+                play_sound("notice", enabled=STATE.config.get("sound_effects", True))
+                print(f"\n{Fore.GREEN}[⚡] Auto-detected Active Streaming Site:{Style.RESET_ALL} {Fore.CYAN}{matched_site}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}(Stream links will auto-use this referer){Style.RESET_ALL}\n")
+            continue
+
+        # Check if copied text is Spotify
+        if is_spotify_url(current_text):
+            m_url = extract_media_url(current_text) or current_text
+            clean = clean_url(m_url)
+            with STATE.lock:
+                if clean in STATE.seen_clipboard:
+                    continue
+                STATE.seen_clipboard.add(clean)
+            play_sound("notice", enabled=STATE.config.get("sound_effects", True))
+            print(f"\n{Fore.GREEN}[⚡] Auto-detected Spotify link on Clipboard!{Style.RESET_ALL} {Fore.CYAN}{m_url}{Style.RESET_ALL}")
+            if clip_mode == "auto":
+                enqueue_spotify_download(m_url, queue_mgr)
+            elif clip_mode == "prompt":
+                with STATE.lock:
+                    STATE.pending_prompt_url = m_url
+                    STATE.pending_prompt_ref = None
+            continue
+
+        # Check media URL
+        if not is_valid_media_url(current_text, media_filter_only=STATE.config.get("media_filter_only", True)):
+            continue
+
+        url = extract_media_url(current_text) or current_text
+        clean = clean_url(url)
+
+        with STATE.lock:
+            if clean in STATE.seen_clipboard:
+                continue
+            STATE.seen_clipboard.add(clean)
+
+        play_sound("notice", enabled=STATE.config.get("sound_effects", True))
+        auto_ref = auto_detect_referer(url, last_seen_website=STATE.last_seen_website, default_referer=STATE.config.get("default_stream_referer", "https://movy.sx/"))
+        if auto_ref:
+            print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")
+
+        if clip_mode == "auto":
+            needs_prompt = STATE.config.get("ask_quality_each_time", True)
+            job = DownloadJob(url=url, referer=auto_ref, needs_quality_prompt=needs_prompt)
+            if needs_prompt:
+                chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref)
+                if chosen_preset is not None or custom_fmt is not None:
+                    job.preset_override = chosen_preset
+                    job.custom_format_str = custom_fmt
+                    queue_mgr.enqueue(job)
+            else:
+                queue_mgr.enqueue(job)
+        elif clip_mode == "prompt":
+            with STATE.lock:
+                STATE.pending_prompt_url = url
+                STATE.pending_prompt_ref = auto_ref

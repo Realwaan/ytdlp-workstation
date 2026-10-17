@@ -1,7 +1,19 @@
 """
 Format and options builder for native yt_dlp.YoutubeDL and subprocess fallback.
-Maps high-level presets and user settings into exact yt-dlp parameter dictionaries and CLI flags.
+Maps high-level presets and user settings into exact yt-dlp parameter dictionaries
+and CLI flags. Shared resolution logic is centralized in _build_common_options
+to avoid duplication between the two execution backends.
 """
+
+__all__ = [
+    "build_native_ytdlp_opts",
+    "build_subprocess_command",
+    "_build_common_options",
+    "_resolve_preset",
+    "_build_output_template",
+    "_build_http_headers",
+    "_build_subtitles_options",
+]
 
 import shutil
 from pathlib import Path
@@ -11,10 +23,8 @@ from ..core.presets import get_preset, resolve_format_sort
 from ..core.state import DownloadJob
 
 
-def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_path: Optional[Path] = None) -> Tuple[Dict[str, Any], str]:
-    """
-    Construct native Python parameter dictionary for yt_dlp.YoutubeDL.
-    """
+def _resolve_preset(job: DownloadJob, config: Dict[str, Any]) -> Tuple[int, Dict[str, Any], str]:
+    """Resolve the effective preset id, preset dict, and preset name for a job."""
     preset_id = job.preset_override or config.get("preset", 1)
     if job.force_audio:
         preset_id = 7
@@ -23,20 +33,70 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
 
     preset = get_preset(preset_id)
     preset_name = preset["name"]
+    return preset_id, preset, preset_name
+
+
+def _build_output_template(
+    job: DownloadJob,
+    config: Dict[str, Any],
+    download_dir: Path,
+) -> Any:
+    """Resolve the output template (str or dict) for a job."""
+    if job.custom_output_template:
+        return job.custom_output_template
+    return {
+        "default": str(download_dir / "%(title)s [%(id)s].%(ext)s"),
+        "playlist": str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s"),
+    }
+
+
+def _build_http_headers(job: DownloadJob) -> Dict[str, str]:
+    """Build HTTP headers dict from job referer and custom headers."""
+    headers: Dict[str, str] = {}
+    if job.referer:
+        headers["Referer"] = job.referer
+    if job.headers:
+        for h in job.headers:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                headers[k.strip()] = v.strip()
+    return headers
+
+
+def _build_subtitles_options(
+    job: DownloadJob,
+    config: Dict[str, Any],
+    preset: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Build subtitle-related options if subtitles are enabled and not audio-only."""
+    subs_mode = config.get("subtitles_mode", "off")
+    if (subs_mode == "off" and not job.force_subs and not job.sub_lang) or preset.get("extract_audio"):
+        return None
+    lang = job.sub_lang if job.sub_lang else ("en.*" if subs_mode == "en" else "all")
+    return {
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitleslangs": [lang],
+        "embed_subs": True,
+    }
+
+
+def _build_common_options(
+    job: DownloadJob,
+    config: Dict[str, Any],
+    archive_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """
+    Build the complete set of resolved download options shared by both
+    native and subprocess backends. Returns a dict mirroring yt-dlp native
+    opts keys plus extra metadata keys used by the subprocess renderer.
+    """
+    _preset_id, preset, preset_name = _resolve_preset(job, config)
     download_dir = Path(job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
     download_dir.mkdir(parents=True, exist_ok=True)
 
-    # Output template configuration
-    if job.custom_output_template:
-        outtmpl = job.custom_output_template
-    else:
-        outtmpl = {
-            "default": str(download_dir / "%(title)s [%(id)s].%(ext)s"),
-            "playlist": str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s")
-        }
-
     opts: Dict[str, Any] = {
-        "outtmpl": outtmpl,
+        "outtmpl": _build_output_template(job, config, download_dir),
         "windowsfilenames": True,
         "updatetime": False,
         "nopart": True,
@@ -52,7 +112,9 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
         "no_warnings": True,
         "noprogress": True,
         "writethumbnail": True,
-        "postprocessors": []
+        "postprocessors": [],
+        "_preset_name": preset_name,
+        "_preset": preset,
     }
 
     # FFmpeg location
@@ -73,15 +135,14 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
     if job.custom_format_str:
         opts["format"] = job.custom_format_str
         opts["merge_output_format"] = "mp4"
-        preset_name = f"Custom: {job.custom_format_str}"
+        opts["_preset_name"] = f"Custom: {job.custom_format_str}"
     else:
-        # Standard preset format
         if preset["extract_audio"]:
             opts["format"] = preset["format"]
             opts["postprocessors"].append({
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": preset["audio_format"],
-                "preferredquality": "0" if preset["audio_format"] == "mp3" else None
+                "preferredquality": "0" if preset["audio_format"] == "mp3" else None,
             })
             opts["postprocessors"].append({"key": "FFmpegMetadata", "add_metadata": True})
             opts["postprocessors"].append({"key": "EmbedThumbnail"})
@@ -91,6 +152,8 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
                 opts["merge_output_format"] = preset["merge_format"]
             opts["postprocessors"].append({"key": "FFmpegMetadata", "add_metadata": True})
             opts["postprocessors"].append({"key": "EmbedThumbnail"})
+            if preset.get("extra_args"):
+                opts["_extra_args"] = list(preset["extra_args"])
 
     # Browser cookies
     cookies = config.get("browser_cookies", "none")
@@ -105,7 +168,6 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
     # Speed limit
     limit = config.get("speed_limit", "none")
     if limit and limit != "none":
-        # Convert 5M to bytes
         try:
             m = 1024 * 1024 if "m" in limit.lower() else (1024 if "k" in limit.lower() else 1)
             num = float("".join([c for c in limit if c.isdigit() or c == "."]))
@@ -114,35 +176,25 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
             pass
 
     # Referer & HTTP Headers
-    http_headers = {}
-    if job.referer:
-        http_headers["Referer"] = job.referer
-    if job.headers:
-        for h in job.headers:
-            if ":" in h:
-                k, v = h.split(":", 1)
-                http_headers[k.strip()] = v.strip()
+    http_headers = _build_http_headers(job)
     if http_headers:
         opts["http_headers"] = http_headers
 
     # Subtitles handling
-    subs_mode = config.get("subtitles_mode", "off")
-    if (subs_mode != "off" or job.force_subs or job.sub_lang) and not preset.get("extract_audio"):
-        opts["writesubtitles"] = True
-        opts["writeautomaticsub"] = True
-        lang = job.sub_lang if job.sub_lang else ("en.*" if subs_mode == "en" else "all")
-        opts["subtitleslangs"] = [lang]
+    subs_opts = _build_subtitles_options(job, config, preset)
+    if subs_opts:
+        opts.update(subs_opts)
         opts["postprocessors"].append({"key": "FFmpegEmbedSubtitle"})
 
     # SponsorBlock
     if config.get("sponsorblock", False):
         opts["postprocessors"].append({
             "key": "SponsorBlock",
-            "categories": ["sponsor", "selfpromo"]
+            "categories": ["sponsor", "selfpromo"],
         })
         opts["postprocessors"].append({
             "key": "ModifyChapters",
-            "remove_sponsor_segments": ["sponsor", "selfpromo"]
+            "remove_sponsor_segments": ["sponsor", "selfpromo"],
         })
 
     # Playlist selective items
@@ -157,30 +209,49 @@ def build_native_ytdlp_opts(job: DownloadJob, config: Dict[str, Any], archive_pa
     if job.extra_metadata:
         opts["postprocessors"].append({
             "key": "FFmpegMetadata",
-            "add_metadata": True
+            "add_metadata": True,
         })
+
+    # Download section (clip/trim)
+    if job.download_section:
+        opts["download_sections"] = f"*{job.download_section}"
+        opts["force_keyframes_at_cuts"] = True
+
+    return opts
+
+
+def build_native_ytdlp_opts(
+    job: DownloadJob,
+    config: Dict[str, Any],
+    archive_path: Optional[Path] = None,
+) -> Tuple[Dict[str, Any], str]:
+    """
+    Construct native Python parameter dictionary for yt_dlp.YoutubeDL.
+    """
+    opts = _build_common_options(job, config, archive_path=archive_path)
+    preset_name = opts.pop("_preset_name", "Unknown")
+    opts.pop("_preset", None)
+    opts.pop("_extra_args", None)
 
     return opts, preset_name
 
 
-def build_subprocess_command(job: DownloadJob, config: Dict[str, Any], archive_path: Optional[Path] = None) -> Tuple[List[str], str]:
+def build_subprocess_command(
+    job: DownloadJob,
+    config: Dict[str, Any],
+    archive_path: Optional[Path] = None,
+) -> Tuple[List[str], str]:
     """
     Construct CLI command arguments for yt-dlp.exe fallback / aria2c multi-stream.
     """
-    preset_id = job.preset_override or config.get("preset", 1)
-    if job.force_audio:
-        preset_id = 7
-    elif job.force_video:
-        preset_id = 1
-
-    preset = get_preset(preset_id)
-    preset_name = preset["name"]
-    download_dir = Path(job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
-    download_dir.mkdir(parents=True, exist_ok=True)
+    opts = _build_common_options(job, config, archive_path=archive_path)
+    preset_name = opts.pop("_preset_name", "Unknown")
+    preset = opts.pop("_preset", {})
+    extra_args = opts.pop("_extra_args", [])
 
     ytdlp_bin = str(BASE_DIR / "yt-dlp.exe") if (BASE_DIR / "yt-dlp.exe").exists() else "yt-dlp"
 
-    cmd = [
+    cmd: List[str] = [
         ytdlp_bin,
         "--windows-filenames",
         "--no-mtime",
@@ -198,7 +269,7 @@ def build_subprocess_command(job: DownloadJob, config: Dict[str, Any], archive_p
         "--fixup", "warn",
         "--newline",
         "--progress-template",
-        "download:PROGRESS|P=%(progress._percent_str)s|D=%(progress._downloaded_bytes_str)s|T=%(progress._total_bytes_str,progress._total_bytes_estimate_str)s|S=%(progress._speed_str)s|E=%(progress._eta_str)s|F=%(progress.fragment_index)s/%(progress.fragment_count)s"
+        "download:PROGRESS|P=%(progress._percent_str)s|D=%(progress._downloaded_bytes_str)s|T=%(progress._total_bytes_str,progress._total_bytes_estimate_str)s|S=%(progress._speed_str)s|E=%(progress._eta_str)s|F=%(progress.fragment_index)s/%(progress.fragment_count)s",
     ]
 
     if FFMPEG_EXE.exists():
@@ -209,75 +280,70 @@ def build_subprocess_command(job: DownloadJob, config: Dict[str, Any], archive_p
         cmd.extend([
             "--downloader", "aria2c",
             "--downloader", "dash,m3u8:native",
-            "--downloader-args", "aria2c:-s 16 -x 16 -k 1M -j 16"
+            "--downloader-args", "aria2c:-s 16 -x 16 -k 1M -j 16",
         ])
 
     if shutil.which("node"):
         cmd.extend(["--js-runtimes", "node"])
 
-    if config.get("use_download_archive", True) and archive_path:
-        cmd.extend(["--download-archive", str(archive_path)])
+    if opts.get("download_archive"):
+        cmd.extend(["--download-archive", str(opts["download_archive"])])
 
-    codec_pref = config.get("codec_preference", "auto")
-    fmt_sort = resolve_format_sort(codec_pref)
-    if fmt_sort:
-        cmd.extend(["--format-sort", fmt_sort])
+    if opts.get("format_sort"):
+        cmd.extend(["--format-sort", ",".join(opts["format_sort"])])
 
-    cookies = config.get("browser_cookies", "none")
-    if cookies != "none":
-        cmd.extend(["--cookies-from-browser", cookies])
+    if opts.get("cookiesfrombrowser"):
+        cmd.extend(["--cookies-from-browser", str(opts["cookiesfrombrowser"][0])])
 
-    cookie_file = config.get("cookies_file", "none")
-    if cookie_file != "none" and Path(cookie_file).exists():
-        cmd.extend(["--cookies", str(Path(cookie_file).resolve())])
+    if opts.get("cookiefile"):
+        cmd.extend(["--cookies", opts["cookiefile"]])
 
-    limit = config.get("speed_limit", "none")
-    if limit != "none":
-        cmd.extend(["--limit-rate", limit])
+    if opts.get("ratelimit") is not None:
+        # Native backend stores bytes; subprocess backend accepts human-readable (e.g. "5M")
+        raw_limit = config.get("speed_limit", "none")
+        if raw_limit and raw_limit != "none":
+            cmd.extend(["--limit-rate", raw_limit])
 
-    if job.referer:
-        cmd.extend(["--referer", job.referer])
-    if job.headers:
-        for h in job.headers:
-            cmd.extend(["--add-header", h])
-
-    if job.custom_output_template:
-        cmd.extend(["-o", job.custom_output_template])
-    else:
-        out_single = str(download_dir / "%(title)s [%(id)s].%(ext)s")
-        out_playlist = str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s")
-        cmd.extend(["-o", f"playlist:{out_playlist}", "-o", out_single])
-
-    if job.download_section:
-        cmd.extend(["--download-sections", f"*{job.download_section}", "--force-keyframes-at-cuts"])
-
-    if job.playlist_items:
-        cmd.extend(["--playlist-items", job.playlist_items, "--yes-playlist"])
-    elif not job.force_playlist:
-        if "playlist?list=" not in job.url:
-            cmd.append("--no-playlist")
-    else:
-        cmd.append("--yes-playlist")
+    if opts.get("http_headers"):
+        for k, v in opts["http_headers"].items():
+            cmd.extend(["--add-header", f"{k}:{v}"])
 
     if job.custom_format_str:
+        cmd.extend(["-o", opts["outtmpl"]])
         cmd.extend(["-f", job.custom_format_str])
         cmd.extend(["--merge-output-format", "mp4", "--embed-thumbnail", "--embed-metadata"])
-        preset_name = f"Custom: {job.custom_format_str}"
     else:
-        preset_name = preset["name"]
-        if preset["extract_audio"]:
-            cmd.extend(["-x", "--audio-format", preset["audio_format"]])
+        if job.custom_output_template:
+            cmd.extend(["-o", job.custom_output_template])
         else:
-            if preset["format"]:
-                cmd.extend(["-f", preset["format"]])
-            if preset["merge_format"]:
-                cmd.extend(["--merge-output-format", preset["merge_format"]])
-        if preset.get("extra_args"):
-            cmd.extend(preset["extra_args"])
+            download_dir = Path(job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+            out_single = str(download_dir / "%(title)s [%(id)s].%(ext)s")
+            out_playlist = str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s")
+            cmd.extend(["-o", f"playlist:{out_playlist}", "-o", out_single])
 
-    subs_mode = config.get("subtitles_mode", "off")
-    if (subs_mode != "off" or job.force_subs or job.sub_lang) and not preset.get("extract_audio"):
-        lang = job.sub_lang if job.sub_lang else ("en.*" if subs_mode == "en" else "all")
+        if job.download_section:
+            cmd.extend(["--download-sections", f"*{job.download_section}", "--force-keyframes-at-cuts"])
+
+        if job.playlist_items:
+            cmd.extend(["--playlist-items", job.playlist_items, "--yes-playlist"])
+        elif not job.force_playlist:
+            if "playlist?list=" not in job.url:
+                cmd.append("--no-playlist")
+        else:
+            cmd.append("--yes-playlist")
+
+        if preset.get("extract_audio"):
+            cmd.extend(["-x", "--audio-format", preset.get("audio_format", "mp3")])
+        else:
+            if preset.get("format"):
+                cmd.extend(["-f", preset["format"]])
+            if preset.get("merge_format"):
+                cmd.extend(["--merge-output-format", preset["merge_format"]])
+        if extra_args:
+            cmd.extend(extra_args)
+
+    if opts.get("writesubtitles"):
+        lang = opts.get("subtitleslangs", ["all"])[0]
         cmd.extend(["--write-auto-subs", "--write-subs", "--sub-langs", lang, "--embed-subs"])
 
     if config.get("sponsorblock", False):

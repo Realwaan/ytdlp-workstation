@@ -3,6 +3,8 @@ Global application state and job definitions.
 Provides thread-safe coordination across background watchers, the queue engine, and terminal CLI.
 """
 
+__all__ = ["DownloadJob", "AppState", "STATE"]
+
 import time
 import uuid
 import threading
@@ -34,6 +36,9 @@ class DownloadJob:
     extra_metadata: Optional[Dict[str, str]] = None
     spotify_thumbnail: Optional[str] = None
     needs_quality_prompt: bool = False
+
+    # Cancellation token (threading.Event) set when job is cancelled mid-download
+    is_cancelled: threading.Event = field(default_factory=threading.Event, compare=False, repr=False)
 
     # Dynamic execution state
     status: str = "QUEUED"  # QUEUED, DOWNLOADING, COMPLETED, FAILED, CANCELLED, PAUSED

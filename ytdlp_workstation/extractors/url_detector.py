@@ -3,6 +3,16 @@ Media URL identification, regular expression pattern matching, and cleaning.
 Supports 1,750+ media sites and direct video/audio CDN streams.
 """
 
+__all__ = [
+    "is_valid_media_url",
+    "extract_media_url",
+    "clean_url",
+    "COMMON_MEDIA_DOMAINS",
+    "MEDIA_REGEX",
+    "MEDIA_EXT_REGEX",
+    "GENERIC_URL_REGEX",
+]
+
 import re
 from typing import Optional
 

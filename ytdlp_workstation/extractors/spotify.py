@@ -3,6 +3,13 @@ Spotify Studio Engine: Metadata extraction, YouTube Music search synthesis,
 duration validation, and ID3 / cover art embedding.
 """
 
+__all__ = [
+    "is_spotify_url",
+    "resolve_spotify_url",
+    "build_music_search_query",
+    "embed_cover_art_ffmpeg",
+]
+
 import re
 import json
 import subprocess
@@ -129,14 +136,14 @@ def resolve_spotify_url(url: str) -> Optional[Dict[str, Any]]:
     return res
 
 
-def build_music_search_query(artist: str, title: str, provider: str = "ytm") -> str:
+def build_music_search_query(artist: str, title: str, provider: str = "ytsearch") -> str:
     """
-    Build targeted YouTube / YouTube Music search query.
-    'ytm' queries YouTube Music for master studio recordings.
+    Build targeted YouTube search query.
+    Uses yt-dlp supported ytsearch1: prefix (ytmsearch1: is not natively supported by yt-dlp).
     """
     clean_artist = artist.replace("\"", "").strip()
     clean_title = title.replace("\"", "").strip()
-    prefix = "ytmsearch1:" if provider == "ytm" else "ytsearch1:"
+    prefix = "ytsearch1:"
     return f"{prefix}{clean_artist} - {clean_title} Audio"
 
 

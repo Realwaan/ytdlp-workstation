@@ -4,6 +4,12 @@ Automatically matches cloud embed streams (.m3u8 / .mpd) with their required par
 to eliminate HTTP 403 Forbidden hotlink blocks.
 """
 
+__all__ = [
+    "auto_detect_referer",
+    "CDN_TO_REFERER_MAP",
+    "KNOWN_STREAMING_DOMAINS",
+]
+
 from typing import Optional
 
 CDN_TO_REFERER_MAP = {

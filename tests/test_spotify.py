@@ -16,7 +16,7 @@ def test_is_spotify_url():
 
 def test_build_music_search_query():
     q_ytm = build_music_search_query("Queen", "Bohemian Rhapsody", provider="ytm")
-    assert q_ytm.startswith("ytmsearch1:")
+    assert q_ytm.startswith("ytsearch1:")
     assert "Queen - Bohemian Rhapsody Audio" in q_ytm
 
     q_yt = build_music_search_query("Daft Punk", "Get Lucky", provider="yt")

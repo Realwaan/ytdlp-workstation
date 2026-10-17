@@ -3,6 +3,8 @@ Native Python yt-dlp execution engine using YoutubeDL class and structured progr
 Eliminates fragile stdout scraping and process startup overhead.
 """
 
+__all__ = ["execute_download_job", "HAS_YTDLP_MODULE"]
+
 import time
 from pathlib import Path
 from typing import Callable, Optional

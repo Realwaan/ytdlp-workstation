@@ -3,6 +3,8 @@ Multi-worker concurrent download queue manager.
 Supports parallel downloads, job cancellation, priority reordering, and queue lifecycle controls.
 """
 
+__all__ = ["QueueManager"]
+
 import time
 import threading
 import collections
@@ -162,7 +164,7 @@ class QueueManager:
             self.is_paused = False
 
     def cancel_job(self, job_id: str) -> bool:
-        """Cancel a pending job by ID."""
+        """Cancel a pending or active job by ID."""
         with self.lock:
             for job in list(self.pending_queue):
                 if job.id == job_id:
@@ -170,6 +172,12 @@ class QueueManager:
                     job.status = "CANCELLED"
                     self.completed_jobs.append(job)
                     return True
+            # Try to cancel an in-progress job via its cancellation token
+            job = self.active_jobs.get(job_id)
+            if job:
+                job.is_cancelled.set()
+                job.status = "CANCELLING"
+                return True
         return False
 
     def list_jobs(self) -> Dict[str, List[DownloadJob]]:
