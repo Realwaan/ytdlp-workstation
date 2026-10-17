@@ -112,7 +112,7 @@ def test_history_clear():
 
 def test_open_command():
     queue_mgr = MagicMock()
-    with patch("ytdlp_workstation.cli.command_dispatcher.os.startfile") as mock_start:
+    with patch("ytdlp_workstation.cli.command_dispatcher.os.startfile", create=True) as mock_start:
         handle_user_command("o", queue_mgr)
         mock_start.assert_called_once()
 
