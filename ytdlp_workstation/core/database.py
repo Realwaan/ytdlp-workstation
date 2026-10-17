@@ -124,6 +124,8 @@ class DatabaseEngine:
 
     def log_job(self, job_dict: Dict[str, Any]) -> None:
         """Save or update download job entry."""
+        import uuid
+        job_id = job_dict.get("id") or str(uuid.uuid4())[:8]
         with self._lock, self._get_connection() as conn:
             conn.execute("""
                 INSERT INTO download_jobs (id, url, title, preset, status, progress, size, duration, error, target_dir, finished_at)
@@ -137,7 +139,7 @@ class DatabaseEngine:
                     error=excluded.error,
                     finished_at=CURRENT_TIMESTAMP;
             """, {
-                "id": job_dict.get("id"),
+                "id": job_id,
                 "url": job_dict.get("url", ""),
                 "title": job_dict.get("title", ""),
                 "preset": job_dict.get("preset", ""),

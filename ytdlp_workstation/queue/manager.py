@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Callable
 from ..core.state import DownloadJob, STATE, AppState
 from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..core.presets import get_preset
+from ..core.events import BUS, EventType
 from ..engine.native_engine import execute_download_job
 from ..extractors.spotify import embed_cover_art_ffmpeg
 from ..utils.notifications import play_sound, send_windows_toast
@@ -23,7 +24,7 @@ class QueueManager:
 
     def __init__(self, max_workers: int = 2, state: Optional[AppState] = None):
         self.state = state or STATE
-        self.max_workers = max_workers
+        self.max_workers = max(1, min(5, max_workers))
         self.lock = threading.Lock()
         self.pending_queue: collections.deque[DownloadJob] = collections.deque()
         self.active_jobs: Dict[str, DownloadJob] = {}
@@ -35,23 +36,37 @@ class QueueManager:
         self.on_job_finished: Optional[Callable[[DownloadJob, bool], None]] = None
 
         self._worker_threads: List[threading.Thread] = []
-        self._start_workers()
+        self._ensure_workers()
 
-    def _start_workers(self):
-        for i in range(self.max_workers):
-            t = threading.Thread(target=self._worker_loop, name=f"DownloadWorker-{i+1}", daemon=True)
-            t.start()
-            self._worker_threads.append(t)
+    def _ensure_workers(self):
+        """Spawn worker threads up to self.max_workers if not already running."""
+        with self.lock:
+            current_count = len(self._worker_threads)
+            for idx in range(current_count, self.max_workers):
+                t = threading.Thread(
+                    target=self._worker_loop,
+                    args=(idx,),
+                    name=f"DownloadWorker-{idx + 1}",
+                    daemon=True,
+                )
+                t.start()
+                self._worker_threads.append(t)
 
-    def _worker_loop(self):
+    def _worker_loop(self, worker_idx: int = 0):
         while not self.stop_requested:
             job = None
             with self.lock:
-                if not self.is_paused and self.pending_queue:
+                if (
+                    not self.is_paused
+                    and worker_idx < self.max_workers
+                    and len(self.active_jobs) < self.max_workers
+                    and self.pending_queue
+                ):
                     job = self.pending_queue.popleft()
                     self.active_jobs[job.id] = job
 
             if job:
+                BUS.publish(EventType.JOB_STARTED, {"job_id": job.id, "url": job.url})
                 self._process_job(job)
                 with self.lock:
                     if job.id in self.active_jobs:
@@ -120,31 +135,57 @@ class QueueManager:
             play_sound("success", enabled=config.get("sound_effects", True))
             send_windows_toast("Download Complete!", f"{saved_name} ({duration}s)", enabled=config.get("desktop_notifications", True))
 
-            self.state.history_manager.add_entry({
+            entry = {
+                "id": job.id,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "url": job.url,
                 "title": saved_name,
                 "preset": preset_name,
                 "status": "Success",
+                "progress": 100.0,
                 "duration": f"{duration}s",
-                "size": job.saved_filesize_str
-            })
+                "size": job.saved_filesize_str,
+                "target_dir": str(effective_target),
+            }
+            self.state.history_manager.add_entry(entry)
+            BUS.publish(EventType.JOB_FINISHED, entry)
         else:
-            play_sound("error", enabled=config.get("sound_effects", True))
-            send_windows_toast("Download Failed", job.error_message or "Unknown error", enabled=config.get("desktop_notifications", True))
+            was_cancelled = job.status in ("CANCELLED", "CANCELLING") or job.is_cancelled.is_set()
+            if not was_cancelled:
+                play_sound("error", enabled=config.get("sound_effects", True))
+                send_windows_toast("Download Failed", job.error_message or "Unknown error", enabled=config.get("desktop_notifications", True))
 
-            self.state.history_manager.add_entry({
+            entry = {
+                "id": job.id,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "url": job.url,
+                "title": job.display_title or job.saved_filename or "",
                 "preset": preset_name,
-                "status": "Failed",
-                "error": job.error_message
-            })
+                "status": "Cancelled" if was_cancelled else "Failed",
+                "progress": job.progress_pct,
+                "error": job.error_message,
+                "target_dir": str(effective_target),
+            }
+            self.state.history_manager.add_entry(entry)
+            BUS.publish(
+                EventType.JOB_CANCELLED if was_cancelled else EventType.JOB_FAILED,
+                entry,
+            )
 
         if self.on_job_finished:
             self.on_job_finished(job, success)
 
     def _handle_progress(self, job: DownloadJob):
+        BUS.publish(
+            EventType.JOB_PROGRESS,
+            {
+                "job_id": job.id,
+                "progress_pct": job.progress_pct,
+                "speed_str": job.speed_str,
+                "eta_str": job.eta_str,
+                "status": job.status,
+            },
+        )
         if self.on_job_progress:
             self.on_job_progress(job)
 
@@ -152,17 +193,20 @@ class QueueManager:
         """Enqueue a new download task."""
         with self.lock:
             self.pending_queue.append(job)
+        BUS.publish(EventType.JOB_ENQUEUED, {"job_id": job.id, "url": job.url})
         return job.id
 
     def pause_queue(self):
         """Pause processing of pending tasks."""
         with self.lock:
             self.is_paused = True
+        BUS.publish(EventType.JOB_PAUSED, {})
 
     def resume_queue(self):
         """Resume processing of pending tasks."""
         with self.lock:
             self.is_paused = False
+        BUS.publish(EventType.JOB_RESUMED, {})
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a pending or active job by ID."""
@@ -172,12 +216,14 @@ class QueueManager:
                     self.pending_queue.remove(job)
                     job.status = "CANCELLED"
                     self.completed_jobs.append(job)
+                    BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
                     return True
             # Try to cancel an in-progress job via its cancellation token
             job = self.active_jobs.get(job_id)
             if job:
                 job.is_cancelled.set()
                 job.status = "CANCELLING"
+                BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
                 return True
         return False
 
@@ -198,7 +244,8 @@ class QueueManager:
             return count
 
     def set_max_workers(self, n: int):
-        """Update worker concurrency cap."""
+        """Update worker concurrency cap and dynamically scale worker pool."""
         n = max(1, min(5, n))
         self.max_workers = n
         self.state.set_config("max_concurrent_downloads", n)
+        self._ensure_workers()

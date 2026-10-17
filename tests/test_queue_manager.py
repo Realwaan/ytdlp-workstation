@@ -35,14 +35,28 @@ def test_queue_lifecycle():
 
 
 def test_worker_concurrency_adjustment():
+    from ytdlp_workstation.core.events import BUS, EventType
+
+    events = []
+    BUS.subscribe(EventType.JOB_ENQUEUED, lambda ev: events.append(ev))
+
     qm = QueueManager(max_workers=2)
+    qm.pause_queue()
+    assert len(qm._worker_threads) == 2
+
     qm.set_max_workers(4)
     assert qm.max_workers == 4
+    assert len(qm._worker_threads) == 4
 
     # Boundaries capping (1-5)
     qm.set_max_workers(10)
     assert qm.max_workers == 5
+    assert len(qm._worker_threads) == 5
     qm.set_max_workers(0)
     assert qm.max_workers == 1
+
+    job = DownloadJob(url="https://www.youtube.com/watch?v=999")
+    qm.enqueue(job)
+    assert any(e.data.get("job_id") == job.id for e in events)
 
     qm.stop_requested = True

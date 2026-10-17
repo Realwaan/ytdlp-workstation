@@ -140,3 +140,37 @@ def test_native_exception_falls_back_to_subprocess(tmp_path):
         result = execute_download_job(job, config)
         assert result is False
         mock_sub.assert_called_once()
+
+
+def test_native_cancellation_via_hook(tmp_path):
+    job = DownloadJob(url="https://www.youtube.com/watch?v=123")
+    config = make_config(download_dir=str(tmp_path))
+
+    def fake_ydl_ctor(opts):
+        ctx = MagicMock()
+
+        def fake_download(_urls):
+            job.is_cancelled.set()
+            for hook in opts.get("progress_hooks", []):
+                hook({"status": "downloading", "downloaded_bytes": 100, "total_bytes": 1000})
+            return 0
+
+        ctx.__enter__.return_value.download.side_effect = fake_download
+        return ctx
+
+    with patch(
+        "ytdlp_workstation.engine.native_engine.HAS_YTDLP_MODULE",
+        new=True,
+    ), patch(
+        "ytdlp_workstation.engine.native_engine.ARIA2C_EXE",
+        new=Path("nonexistent.exe"),
+    ), patch(
+        "ytdlp_workstation.engine.native_engine.yt_dlp.YoutubeDL",
+        side_effect=fake_ydl_ctor,
+    ), patch(
+        "ytdlp_workstation.engine.native_engine.run_subprocess_download",
+    ) as mock_sub:
+        result = execute_download_job(job, config)
+        assert result is False
+        assert job.status == "CANCELLED"
+        mock_sub.assert_not_called()

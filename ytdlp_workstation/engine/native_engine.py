@@ -21,6 +21,10 @@ except ImportError:
     HAS_YTDLP_MODULE = False
 
 
+class _CancelledError(Exception):
+    """Raised inside yt-dlp progress hook when job.is_cancelled is set."""
+
+
 def execute_download_job(
     job: DownloadJob,
     config: dict,
@@ -31,6 +35,10 @@ def execute_download_job(
     Main download execution entry point.
     Uses native yt_dlp.YoutubeDL with progress hooks, or subprocess engine if aria2c turbo is enabled.
     """
+    if job.is_cancelled.is_set():
+        job.status = "CANCELLED"
+        return False
+
     # If aria2c is available and configured, use subprocess engine for multi-connection socket saturation
     if ARIA2C_EXE.exists():
         return run_subprocess_download(job, config, archive_path=archive_path, on_progress=on_progress)
@@ -45,6 +53,10 @@ def execute_download_job(
     job.status = "DOWNLOADING"
 
     def _native_hook(d: dict):
+        if job.is_cancelled.is_set():
+            job.status = "CANCELLED"
+            raise _CancelledError("Download cancelled by user")
+
         status = d.get("status")
         if status == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -108,6 +120,11 @@ def execute_download_job(
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             ret_code = ydl.download([job.url])
+            if job.is_cancelled.is_set():
+                job.status = "CANCELLED"
+                cleanup_orphaned_fragments(Path(effective_target))
+                return False
+
             success = (ret_code == 0)
 
             if success:
@@ -122,7 +139,15 @@ def execute_download_job(
 
             return success
 
+    except _CancelledError:
+        job.status = "CANCELLED"
+        cleanup_orphaned_fragments(Path(effective_target))
+        return False
     except Exception as e:
+        if job.is_cancelled.is_set():
+            job.status = "CANCELLED"
+            cleanup_orphaned_fragments(Path(effective_target))
+            return False
         # Fall back to subprocess engine if native mode hit an edge case
         try:
             return run_subprocess_download(job, config, archive_path=archive_path, on_progress=on_progress)
