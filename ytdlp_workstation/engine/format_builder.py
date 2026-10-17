@@ -15,6 +15,7 @@ __all__ = [
     "_build_subtitles_options",
 ]
 
+import hashlib
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
@@ -22,6 +23,18 @@ from ..core.config import FFMPEG_EXE, YTDLP_EXE, ARIA2C_EXE, BASE_DIR, DEFAULT_D
 from ..core.presets import get_preset, resolve_format_sort
 from ..core.state import DownloadJob
 from ..extractors.referer import auto_detect_referer
+from ..extractors.title_detector import detect_stream_title, extract_resolution_tag
+from ..utils.system import sanitize_filename
+
+
+def _is_generic_stream_url(url: str, referer: Optional[str] = None) -> bool:
+    """Return True if URL is a generic HLS/DASH/cloud stream whose yt-dlp ID is not globally unique."""
+    if referer:
+        return True
+    base = (url or "").split("?")[0].lower()
+    return base.endswith((".m3u8", ".mpd", ".ts")) or any(
+        tok in base for tok in ("/hls/", "/m3u8/", "/vd/")
+    )
 
 
 def _resolve_preset(job: DownloadJob, config: Dict[str, Any]) -> Tuple[int, Dict[str, Any], str]:
@@ -45,6 +58,27 @@ def _build_output_template(
     """Resolve the output template (str or dict) for a job."""
     if job.custom_output_template:
         return job.custom_output_template
+    if _is_generic_stream_url(job.url, job.referer):
+        url_hash = hashlib.sha256(job.url.encode("utf-8")).hexdigest()[:8]
+        res_tag = extract_resolution_tag(job.url)
+        if job.display_title:
+            clean_name = sanitize_filename(job.display_title)
+            if res_tag and res_tag.lower() not in clean_name.lower():
+                stem = f"{clean_name} [{res_tag}]"
+            else:
+                stem = clean_name
+            # Append short URL hash only if a file with the same stem already exists
+            existing = list(download_dir.glob(f"{stem}.*")) if download_dir.exists() else []
+            if existing:
+                stem = f"{stem} [{url_hash}]"
+            return {
+                "default": str(download_dir / f"{stem}.%(ext)s"),
+                "playlist": str(download_dir / "%(playlist_title,playlist)s" / f"%(playlist_index)s - {stem}.%(ext)s"),
+            }
+        return {
+            "default": str(download_dir / f"%(title)s [{url_hash}].%(ext)s"),
+            "playlist": str(download_dir / "%(playlist_title,playlist)s" / f"%(playlist_index)s - %(title)s [{url_hash}].%(ext)s"),
+        }
     return {
         "default": str(download_dir / "%(title)s [%(id)s].%(ext)s"),
         "playlist": str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s"),
@@ -102,6 +136,15 @@ def _build_common_options(
     download_dir = Path(job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
     download_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve referer & HTTP headers first so _is_generic_stream_url sees job.referer
+    http_headers = _build_http_headers(job, config)
+
+    # Auto-detect movie/show title for generic streams if not already provided
+    if not job.display_title and _is_generic_stream_url(job.url, job.referer):
+        detected_title = detect_stream_title(job.url)
+        if detected_title:
+            job.display_title = detected_title
+
     opts: Dict[str, Any] = {
         "outtmpl": _build_output_template(job, config, download_dir),
         "windowsfilenames": True,
@@ -128,8 +171,8 @@ def _build_common_options(
     if FFMPEG_EXE.exists():
         opts["ffmpeg_location"] = str(FFMPEG_EXE.parent)
 
-    # Download archive integration (instant duplicate skipping)
-    if config.get("use_download_archive", True) and archive_path:
+    # Download archive integration (skip for generic/cloud streams whose IDs like 'index-s2160p-v1-a1' collide)
+    if config.get("use_download_archive", True) and archive_path and not _is_generic_stream_url(job.url, job.referer):
         opts["download_archive"] = str(archive_path)
 
     # Codec format sort preference
@@ -274,6 +317,7 @@ def build_subprocess_command(
         "--retry-sleep", "fragment:exp=1:20",
         "--retry-sleep", "file_access:exp=1:10",
         "--fixup", "warn",
+        "--progress",
         "--newline",
         "--progress-template",
         "download:PROGRESS|P=%(progress._percent_str)s|D=%(progress._downloaded_bytes_str)s|T=%(progress._total_bytes_str,progress._total_bytes_estimate_str)s|S=%(progress._speed_str)s|E=%(progress._eta_str)s|F=%(progress.fragment_index)s/%(progress.fragment_count)s",
@@ -286,7 +330,7 @@ def build_subprocess_command(
         cmd.extend([
             "--downloader", "aria2c",
             "--downloader", "dash,m3u8:native",
-            "--downloader-args", "aria2c:-s 16 -x 16 -k 1M -j 16",
+            "--downloader-args", "aria2c:-s 16 -x 16 -k 1M -j 16 --summary-interval=1 --console-log-level=warn",
         ])
 
     if shutil.which("node"):
@@ -315,17 +359,19 @@ def build_subprocess_command(
             cmd.extend(["--add-header", f"{k}:{v}"])
 
     if job.custom_format_str:
-        cmd.extend(["-o", opts["outtmpl"]])
+        out_tmpl = opts["outtmpl"]
+        if isinstance(out_tmpl, dict):
+            cmd.extend(["-o", f"playlist:{out_tmpl['playlist']}", "-o", out_tmpl["default"]])
+        else:
+            cmd.extend(["-o", str(out_tmpl)])
         cmd.extend(["-f", job.custom_format_str])
         cmd.extend(["--merge-output-format", "mp4", "--embed-thumbnail", "--embed-metadata"])
     else:
-        if job.custom_output_template:
-            cmd.extend(["-o", job.custom_output_template])
+        out_tmpl = opts["outtmpl"]
+        if isinstance(out_tmpl, dict):
+            cmd.extend(["-o", f"playlist:{out_tmpl['playlist']}", "-o", out_tmpl["default"]])
         else:
-            download_dir = Path(job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
-            out_single = str(download_dir / "%(title)s [%(id)s].%(ext)s")
-            out_playlist = str(download_dir / "%(playlist_title,playlist)s" / "%(playlist_index)s - %(title)s [%(id)s].%(ext)s")
-            cmd.extend(["-o", f"playlist:{out_playlist}", "-o", out_single])
+            cmd.extend(["-o", str(out_tmpl)])
 
         if job.download_section:
             cmd.extend(["--download-sections", f"*{job.download_section}", "--force-keyframes-at-cuts"])

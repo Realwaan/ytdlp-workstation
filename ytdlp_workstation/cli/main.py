@@ -20,7 +20,7 @@ from ..queue.manager import QueueManager
 from ..engine.process_supervisor import SUPERVISOR
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
 from .console import CONSOLE
-from .ui import Fore, Style, print_banner, format_linux_bar, format_job_progress, format_job_result
+from .ui import Fore, Style, print_banner, format_linux_bar, format_job_started, format_job_progress, format_job_result
 from .repl import run_repl
 
 
@@ -36,6 +36,9 @@ def main(state: Optional[AppState] = None):
     # Initialize Concurrent Queue Manager
     workers = state.config.get("max_concurrent_downloads", 2)
     queue_mgr = QueueManager(max_workers=workers, state=state)
+
+    def _render_started(job: DownloadJob, preset_name: str):
+        print(format_job_started(job, preset_name))
 
     def _render_progress(job: DownloadJob):
         if CONSOLE.live:
@@ -58,6 +61,7 @@ def main(state: Optional[AppState] = None):
         CONSOLE.clear_status(job.id)
         print(format_job_result(job, success))
 
+    queue_mgr.on_job_started = _render_started
     queue_mgr.on_job_progress = _render_progress
     queue_mgr.on_job_finished = _render_finished
 

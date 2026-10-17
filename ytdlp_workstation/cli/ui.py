@@ -19,7 +19,10 @@ for _s in (getattr(sys, "__stdout__", None), getattr(sys, "__stderr__", None), s
 try:
     import colorama
     from colorama import Fore, Style, Back
-    colorama.init(autoreset=True)
+    if hasattr(colorama, "just_fix_windows_console"):
+        colorama.just_fix_windows_console()
+    else:
+        colorama.init()
 except ImportError:
     class DummyColor:
         def __getattr__(self, name):
@@ -165,6 +168,9 @@ def _short_title(title: str, limit: int = 22) -> str:
 
 def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, eta: str, f_str: str = "", status: str = "") -> str:
     """Format Linux CLI / tqdm style progress bar."""
+    if status == "STARTING":
+        return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.YELLOW}[STARTING] Connecting & extracting stream info...{Style.RESET_ALL}\033[K"
+
     if status == "PROCESSING":
         return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.YELLOW}[PROCESSING] Merging video & audio (ffmpeg)...{Style.RESET_ALL}\033[K"
 

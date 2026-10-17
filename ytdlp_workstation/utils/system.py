@@ -9,7 +9,7 @@ import shutil
 import ctypes
 import subprocess
 from pathlib import Path
-from ..core.config import BASE_DIR, YTDLP_EXE, FFMPEG_EXE, DEFAULT_DOWNLOAD_DIR
+from ..core.config import BASE_DIR, BIN_DIR, YTDLP_EXE, FFMPEG_EXE, DEFAULT_DOWNLOAD_DIR
 
 
 def sanitize_filename(name: str) -> str:
@@ -62,6 +62,11 @@ def reset_console_title() -> None:
 
 def bootstrap_workstation_environment() -> None:
     """Auto-detects missing core dependencies and bootstraps them."""
+    bin_str = str(BIN_DIR)
+    cur_path = os.environ.get("PATH", "")
+    if bin_str.lower() not in cur_path.lower():
+        os.environ["PATH"] = f"{bin_str}{os.pathsep}{cur_path}"
+
     missing_pkgs = []
     try:
         import colorama

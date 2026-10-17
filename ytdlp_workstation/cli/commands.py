@@ -14,6 +14,7 @@ from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
+from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
 from ..utils.system import sanitize_filename
 from .ui import Fore, Style, print_banner
@@ -110,16 +111,22 @@ def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, ref
     if referer is None:
         referer = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
     job = DownloadJob(url=url, referer=referer, **job_kwargs)
+    if not job.display_title and (referer or ".m3u8" in url.lower() or "/vd/" in url.lower()):
+        detected = detect_stream_title(url, last_seen_website=state.last_seen_website)
+        if detected:
+            job.display_title = detected
+            print(f"{Fore.GREEN}[🎬] Auto-detected Movie Title:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{detected}{Style.RESET_ALL}")
     wants_prompt = state.config.get("ask_quality_each_time", True)
     if wants_prompt and job.preset_override is None and not job.custom_format_str:
-        preset_id, custom_fmt = prompt_video_quality(url, referer=referer, state=state)
+        preset_id, custom_fmt = prompt_video_quality(url, referer=referer, state=state, job=job)
         if preset_id is None and custom_fmt is None:
             return False
         job.preset_override = preset_id
         job.custom_format_str = custom_fmt
     queue_mgr.enqueue(job)
+    title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
     ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {referer}){Style.RESET_ALL}" if referer else ""
-    print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}{ref_note}\n")
+    print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{url}{ref_note}\n")
     return True
 
 

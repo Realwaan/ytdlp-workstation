@@ -38,7 +38,7 @@ try:
 except ImportError:
     HAS_MSVCRT = False
 
-from ..core.state import AppState, resolve_state
+from ..core.state import AppState, DownloadJob, resolve_state
 from ..core.config import YTDLP_EXE, FFMPEG_EXE
 from ..core.presets import PRESETS
 from . import inbox
@@ -342,7 +342,12 @@ _CHOICE_TO_PRESET = {
 }
 
 
-def prompt_video_quality(url: str, referer: Optional[str] = None, state: Optional[AppState] = None) -> Tuple[Optional[int], Optional[str]]:
+def prompt_video_quality(
+    url: str,
+    referer: Optional[str] = None,
+    state: Optional[AppState] = None,
+    job: Optional[DownloadJob] = None,
+) -> Tuple[Optional[int], Optional[str]]:
     """Interactive quality picker.
 
     Returns ``(preset_id, None)``, ``(None, custom_format)`` or ``(None, None)``
@@ -353,32 +358,45 @@ def prompt_video_quality(url: str, referer: Optional[str] = None, state: Optiona
     default_name = PRESETS.get(default_pid, PRESETS[1])["name"]
     bar = "═" * 71
 
-    lines = [
-        f"\n{Fore.CYAN}╔{bar}╗{Style.RESET_ALL}",
-        f"{Fore.CYAN}║ {Style.BRIGHT}{Fore.YELLOW}🎥 PICK VIDEO QUALITY FOR THIS DOWNLOAD{Style.RESET_ALL}",
-        f"{Fore.CYAN}║ {Fore.WHITE}URL: {Fore.LIGHTCYAN_EX}{url[:65]}{'...' if len(url) > 65 else ''}{Style.RESET_ALL}",
-    ]
-    if referer:
-        lines.append(f"{Fore.CYAN}║ {Fore.WHITE}Referer: {Fore.YELLOW}{referer}{Style.RESET_ALL}")
-    lines.append(f"{Fore.CYAN}╠{bar}╣{Style.RESET_ALL}")
-    for key, color, label, desc in _QUALITY_MENU:
-        lines.append(f"{Fore.CYAN}║  {color}[{key}] {label:<30}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}- {desc}{Style.RESET_ALL}")
-    lines.append(f"{Fore.CYAN}║  {Fore.RED}[s] Skip / Cancel{Style.RESET_ALL}")
-    lines.append(f"{Fore.CYAN}╚{bar}╝{Style.RESET_ALL}")
-    print("\n".join(lines))
+    while True:
+        cur_title = job.display_title if job else None
+        lines = [
+            f"\n{Fore.CYAN}╔{bar}╗{Style.RESET_ALL}",
+            f"{Fore.CYAN}║ {Style.BRIGHT}{Fore.YELLOW}🎥 PICK VIDEO QUALITY FOR THIS DOWNLOAD{Style.RESET_ALL}",
+            f"{Fore.CYAN}║ {Fore.WHITE}URL: {Fore.LIGHTCYAN_EX}{url[:65]}{'...' if len(url) > 65 else ''}{Style.RESET_ALL}",
+        ]
+        if cur_title:
+            lines.append(f"{Fore.CYAN}║ {Fore.WHITE}Movie/Title: {Fore.LIGHTGREEN_EX}{cur_title}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}(press [t] to rename){Style.RESET_ALL}")
+        elif referer or ".m3u8" in url.lower():
+            lines.append(f"{Fore.CYAN}║ {Fore.WHITE}Movie/Title: {Fore.LIGHTBLACK_EX}Auto / Unknown (press [t] to set movie name){Style.RESET_ALL}")
+        if referer:
+            lines.append(f"{Fore.CYAN}║ {Fore.WHITE}Referer: {Fore.YELLOW}{referer}{Style.RESET_ALL}")
+        lines.append(f"{Fore.CYAN}╠{bar}╣{Style.RESET_ALL}")
+        for key, color, label, desc in _QUALITY_MENU:
+            lines.append(f"{Fore.CYAN}║  {color}[{key}] {label:<30}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}- {desc}{Style.RESET_ALL}")
+        lines.append(f"{Fore.CYAN}║  {Fore.LIGHTCYAN_EX}[t] {'Set / Rename Movie Title':<30}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}- Custom output filename{Style.RESET_ALL}")
+        lines.append(f"{Fore.CYAN}║  {Fore.RED}[s] Skip / Cancel{Style.RESET_ALL}")
+        lines.append(f"{Fore.CYAN}╚{bar}╝{Style.RESET_ALL}")
+        print("\n".join(lines))
 
-    prompt = (
-        f"{Fore.LIGHTWHITE_EX}Press a key [1-9, a, b, 0, f, s] or "
-        f"{Fore.GREEN}Enter for default (#{default_pid} - {default_name}){Fore.LIGHTWHITE_EX}: {Style.RESET_ALL}"
-    )
-    valid_keys = {k for k, *_ in _QUALITY_MENU} | {"s"}
-    choice = read_single_choice(valid_keys, default_val=str(default_pid), state=state, prompt=prompt)
+        prompt = (
+            f"{Fore.LIGHTWHITE_EX}Press a key [1-9, a, b, 0, f, t, s] or "
+            f"{Fore.GREEN}Enter for default (#{default_pid} - {default_name}){Fore.LIGHTWHITE_EX}: {Style.RESET_ALL}"
+        )
+        valid_keys = {k for k, *_ in _QUALITY_MENU} | {"t", "s"}
+        choice = read_single_choice(valid_keys, default_val=str(default_pid), state=state, prompt=prompt)
 
-    if choice in ("f", "formats", "format"):
-        return None, inspect_and_pick_formats(url, referer=referer, state=state)
-    if choice in ("s", "skip", "cancel", "n"):
-        print(f"{Fore.LIGHTBLACK_EX}[!] Download skipped.{Style.RESET_ALL}\n")
-        return None, None
-    if choice in _CHOICE_TO_PRESET:
-        return _CHOICE_TO_PRESET[choice], None
-    return default_pid, None
+        if choice in ("t", "title", "name"):
+            new_title = ask_text(f"{Fore.CYAN}🎬 Enter movie/video title: {Style.RESET_ALL}", state)
+            if new_title and job is not None:
+                job.display_title = new_title.strip()
+                print(f"{Fore.GREEN}[✓] Title set to:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL}")
+            continue
+        if choice in ("f", "formats", "format"):
+            return None, inspect_and_pick_formats(url, referer=referer, state=state)
+        if choice in ("s", "skip", "cancel", "n"):
+            print(f"{Fore.LIGHTBLACK_EX}[!] Download skipped.{Style.RESET_ALL}\n")
+            return None, None
+        if choice in _CHOICE_TO_PRESET:
+            return _CHOICE_TO_PRESET[choice], None
+        return default_pid, None

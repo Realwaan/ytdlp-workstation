@@ -4,6 +4,7 @@ Subprocess execution engine for aria2c gigabit turbo and external downloader tas
 
 __all__ = ["run_subprocess_download"]
 
+import re
 import sys
 import time
 import subprocess
@@ -14,6 +15,10 @@ from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..utils.system import cleanup_orphaned_fragments, set_console_title, reset_console_title
 from .format_builder import build_subprocess_command
 from .process_supervisor import SUPERVISOR
+
+_ARIA2_RE = re.compile(
+    r"\[#[0-9a-fA-F]+\s+([^\s/]+)/([^\s(]+)\((\d+(?:\.\d+)?)%\).*?DL:([^\s\]]+)(?:\s+ETA:([^\s\]]+))?"
+)
 
 
 def run_subprocess_download(
@@ -65,6 +70,7 @@ def run_subprocess_download(
                 except Exception:
                     pct_val = 0.0
 
+                job.status = "DOWNLOADING"
                 job.progress_pct = pct_val
                 job.downloaded_str = p_map.get("D", "")
                 job.total_str = p_map.get("T", "")
@@ -77,6 +83,28 @@ def run_subprocess_download(
 
                 set_console_title(f"[{job.progress_pct:.1f}% - {job.speed_str} - ETA {job.eta_str}] YT-DLP Workstation")
 
+                if on_progress:
+                    on_progress(job)
+
+            elif "[#" in line and "%" in line and "DL:" in line:
+                m = _ARIA2_RE.search(line)
+                if m:
+                    job.status = "DOWNLOADING"
+                    job.downloaded_str = m.group(1)
+                    job.total_str = m.group(2)
+                    try:
+                        job.progress_pct = float(m.group(3))
+                    except Exception:
+                        pass
+                    job.speed_str = f"{m.group(4)}/s"
+                    job.eta_str = m.group(5) or "--:--"
+                    set_console_title(f"[{job.progress_pct:.1f}% - {job.speed_str} - ETA {job.eta_str}] YT-DLP Workstation")
+                    if on_progress:
+                        on_progress(job)
+
+            elif "[Merger]" in line or "[ExtractAudio]" in line:
+                job.status = "PROCESSING"
+                job.progress_pct = 100.0
                 if on_progress:
                     on_progress(job)
 

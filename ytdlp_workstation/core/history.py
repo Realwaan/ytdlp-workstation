@@ -55,13 +55,21 @@ class HistoryManager:
 
     def _load_archive_cache(self) -> Set[str]:
         cache = set()
+        had_generic = False
         if self.archive_file.exists():
             try:
                 with open(self.archive_file, "r", encoding="utf-8", errors="ignore") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
+                            if line.startswith("generic "):
+                                had_generic = True
+                                continue
                             cache.add(line)
+                if had_generic:
+                    with open(self.archive_file, "w", encoding="utf-8") as f:
+                        for item in sorted(cache):
+                            f.write(item + "\n")
             except Exception:
                 pass
         return cache

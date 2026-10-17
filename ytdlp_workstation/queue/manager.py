@@ -32,6 +32,7 @@ class QueueManager:
         self.is_paused = False
         self.stop_requested = False
 
+        self.on_job_started: Optional[Callable[[DownloadJob, str], None]] = None
         self.on_job_progress: Optional[Callable[[DownloadJob], None]] = None
         self.on_job_finished: Optional[Callable[[DownloadJob, bool], None]] = None
 
@@ -83,6 +84,11 @@ class QueueManager:
         preset_id = job.preset_override or config.get("preset", 1)
         preset_name = get_preset(preset_id)["name"]
         effective_target = job.target_dir or config.get("download_dir", DEFAULT_DOWNLOAD_DIR)
+
+        job.status = "STARTING"
+        if self.on_job_started:
+            self.on_job_started(job, preset_name)
+        self._handle_progress(job)
 
         success = execute_download_job(
             job,

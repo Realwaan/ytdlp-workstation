@@ -65,3 +65,41 @@ def test_build_subprocess_command():
     assert "*01:00-02:00" in cmd
     assert "--limit-rate" in cmd
     assert "5M" in cmd
+
+
+def test_generic_m3u8_stream_unique_filename_and_no_archive(tmp_path):
+    arch_file = tmp_path / "archive.txt"
+    url1 = "https://moon.zenoak.top/vd/AAA111/index-s2160p-v1-a1.m3u8"
+    url2 = "https://moon.zenoak.top/vd/BBB222/index-s2160p-v1-a1.m3u8"
+
+    job1 = DownloadJob(url=url1)
+    job2 = DownloadJob(url=url2)
+    config = {"download_dir": str(tmp_path), "use_download_archive": True}
+
+    opts1, _ = build_native_ytdlp_opts(job1, config, archive_path=arch_file)
+    opts2, _ = build_native_ytdlp_opts(job2, config, archive_path=arch_file)
+
+    assert "download_archive" not in opts1
+    assert "download_archive" not in opts2
+    assert opts1["outtmpl"]["default"] != opts2["outtmpl"]["default"]
+    assert "%(id)s" not in opts1["outtmpl"]["default"]
+
+
+def test_generic_stream_with_detected_movie_title(tmp_path):
+    from ytdlp_workstation.extractors.title_detector import (
+        clean_browser_tab_title,
+        detect_stream_title,
+        extract_resolution_tag,
+    )
+
+    assert clean_browser_tab_title("Watch The Odyssey (2026) Online Free - Movy - Brave") == "The Odyssey (2026)"
+    assert clean_browser_tab_title("🔊 Spider-Man: Brand New Day | CineJoy - Google Chrome") == "Spider-Man Brand New Day"
+    assert extract_resolution_tag("https://moon.zenoak.top/vd/ABC/index-s2160p-v1-a1.m3u8") == "2160p"
+    assert detect_stream_title("https://cdn.example.com/hls/the-odyssey-2026/master.m3u8") == "The Odyssey 2026"
+
+    url = "https://moon.zenoak.top/vd/MUNQMG/index-s2160p-v1-a1.m3u8"
+    job = DownloadJob(url=url, display_title="The Odyssey (2026)")
+    opts, _ = build_native_ytdlp_opts(job, {"download_dir": str(tmp_path)})
+    assert Path(opts["outtmpl"]["default"]).name == "The Odyssey (2026) [2160p].%(ext)s"
+
+

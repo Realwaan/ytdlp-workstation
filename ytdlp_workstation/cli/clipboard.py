@@ -23,6 +23,7 @@ from ..extractors.referer import (
     CDN_TO_REFERER_MAP,
     MAINSTREAM_PLATFORMS,
 )
+from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url
 from ..utils.clipboard import get_clipboard_text
 from ..utils.notifications import play_sound
@@ -37,19 +38,21 @@ def _resolve_state(state: Optional[AppState] = None) -> AppState:
     return resolve_state(state)
 
 
-def _prompt_and_enqueue(url: str, auto_ref: Optional[str], queue_mgr: QueueManager, state: AppState) -> None:
-    chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref, state=state)
+def _prompt_and_enqueue(url: str, auto_ref: Optional[str], queue_mgr: QueueManager, state: AppState, detected_title: Optional[str] = None) -> None:
+    job = DownloadJob(
+        url=url,
+        referer=auto_ref,
+        display_title=detected_title,
+        needs_quality_prompt=True,
+    )
+    chosen_preset, custom_fmt = prompt_video_quality(url, referer=auto_ref, state=state, job=job)
     if chosen_preset is not None or custom_fmt is not None:
-        job = DownloadJob(
-            url=url,
-            referer=auto_ref,
-            needs_quality_prompt=True,
-            preset_override=chosen_preset,
-            custom_format_str=custom_fmt,
-        )
+        job.preset_override = chosen_preset
+        job.custom_format_str = custom_fmt
         queue_mgr.enqueue(job)
+        title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
         ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
-        print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}{ref_note}\n")
+        print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{url}{ref_note}\n")
 
 
 def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] = None):
@@ -144,17 +147,24 @@ def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] 
         if auto_ref:
             print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")
 
+        detected_title = None
+        if auto_ref or ".m3u8" in url.lower() or "/vd/" in url.lower():
+            detected_title = detect_stream_title(url, last_seen_website=state.last_seen_website)
+            if detected_title:
+                print(f"{Fore.GREEN}[🎬] Auto-detected Movie Title:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{detected_title}{Style.RESET_ALL}")
+
         if clip_mode == "auto":
             needs_prompt = state.config.get("ask_quality_each_time", True)
             if needs_prompt:
                 if CONSOLE.prompt_active:
-                    inbox.post(_prompt_and_enqueue, url, auto_ref, queue_mgr, state)
+                    inbox.post(_prompt_and_enqueue, url, auto_ref, queue_mgr, state, detected_title)
                 else:
-                    _prompt_and_enqueue(url, auto_ref, queue_mgr, state)
+                    _prompt_and_enqueue(url, auto_ref, queue_mgr, state, detected_title)
             else:
-                job = DownloadJob(url=url, referer=auto_ref, needs_quality_prompt=False)
+                job = DownloadJob(url=url, referer=auto_ref, display_title=detected_title, needs_quality_prompt=False)
                 queue_mgr.enqueue(job)
-                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {url}\n")
+                title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
+                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{url}\n")
         elif clip_mode == "prompt":
             with state.lock:
                 state.pending_prompt_url = url

@@ -24,6 +24,7 @@ from ..core.presets import PRESETS
 from ..queue.manager import QueueManager
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX, clean_url
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
+from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url
 from ..utils.system import sanitize_filename
 from .console import CONSOLE
@@ -309,6 +310,18 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         ytdlp_cmd = str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp")
         with CONSOLE.suspend():
             subprocess.run([ytdlp_cmd, "-U"])
+    elif first_word in ("name", "title"):
+        m_url = extract_media_url(arg_part) if arg_part else None
+        if m_url:
+            custom_title = arg_part.replace(m_url, "").strip(" \"'-:")
+        else:
+            custom_title = arg_part.strip(" \"'") if arg_part else ask_text("🎬 Movie/Video Title >>> ", state).strip(" \"'")
+            u_in = ask_text("🔗 Media URL >>> ", state).strip(" \"'") if custom_title else ""
+            m_url = extract_media_url(u_in) or u_in
+        if custom_title and m_url:
+            enqueue_media_url(m_url, queue_mgr, state=state, display_title=custom_title)
+        else:
+            print(f"{Fore.RED}[!] Usage: name <Movie Title> <URL>{Style.RESET_ALL}\n")
     elif is_spotify_url(raw):
         enqueue_spotify_download(raw.strip("\"'"), queue_mgr, state=state)
     elif is_valid_media_url(raw) or GENERIC_URL_REGEX.search(raw):
@@ -316,18 +329,25 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         auto_ref = auto_detect_referer(m_url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
         if auto_ref:
             print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")
-        job = DownloadJob(url=m_url, referer=auto_ref)
+        detected_title = None
+        if auto_ref or ".m3u8" in m_url.lower() or "/vd/" in m_url.lower():
+            detected_title = detect_stream_title(m_url, last_seen_website=state.last_seen_website)
+            if detected_title:
+                print(f"{Fore.GREEN}[🎬] Auto-detected Movie Title:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{detected_title}{Style.RESET_ALL}")
+        job = DownloadJob(url=m_url, referer=auto_ref, display_title=detected_title)
         if state.config.get("ask_quality_each_time", True):
-            chosen_preset, custom_fmt = prompt_video_quality(m_url, referer=auto_ref, state=state)
+            chosen_preset, custom_fmt = prompt_video_quality(m_url, referer=auto_ref, state=state, job=job)
             if chosen_preset is not None or custom_fmt is not None:
                 job.preset_override = chosen_preset
                 job.custom_format_str = custom_fmt
                 queue_mgr.enqueue(job)
+                title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
                 ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
-                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {m_url}{ref_note}\n")
+                print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{m_url}{ref_note}\n")
         else:
             queue_mgr.enqueue(job)
+            title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
             ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {auto_ref}){Style.RESET_ALL}" if auto_ref else ""
-            print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {m_url}{ref_note}\n")
+            print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{m_url}{ref_note}\n")
     else:
         print(f"{Fore.RED}[!] Unrecognized command or invalid URL. Type 'help' for command list.{Style.RESET_ALL}\n")

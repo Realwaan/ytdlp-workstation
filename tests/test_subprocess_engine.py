@@ -153,3 +153,32 @@ def test_subprocess_exception_sets_failed(tmp_path):
     assert result is False
     assert job.status == "FAILED"
     assert "no such file" in job.error_message
+
+
+def test_subprocess_aria2c_progress_parsing(tmp_path):
+    job = DownloadJob(url="https://www.youtube.com/watch?v=123")
+    config = make_config(download_dir=str(tmp_path))
+
+    lines = [
+        "[#408b72 15MiB/42MiB(35%) CN:16 DL:12MiB ETA:2s]",
+        "[Merger] Merging formats into \"video.mp4\"",
+    ]
+    fake_proc = _FakeProc(lines=lines, returncode=0)
+
+    with patch(
+        "ytdlp_workstation.engine.subprocess_engine.subprocess.Popen",
+        return_value=fake_proc,
+    ), patch(
+        "ytdlp_workstation.engine.subprocess_engine.SUPERVISOR.register",
+    ):
+        progress_snapshots = []
+        result = run_subprocess_download(
+            job,
+            config,
+            on_progress=lambda j: progress_snapshots.append((j.status, j.progress_pct, j.speed_str)),
+        )
+
+    assert result is True
+    assert ("DOWNLOADING", 35.0, "12MiB/s") in progress_snapshots
+    assert ("PROCESSING", 100.0, "12MiB/s") in progress_snapshots
+
