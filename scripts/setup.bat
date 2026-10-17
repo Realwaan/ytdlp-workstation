@@ -2,12 +2,17 @@
 setlocal enabledelayedexpansion
 title YT-DLP Supercharged Workstation - Setup Wizard
 chcp 65001 >nul
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo ===================================================================
 echo   ⚡ YT-DLP Supercharged Workstation - Automated Setup
 echo ===================================================================
 echo.
+
+:: Ensure bin, data, and downloads directories exist
+if not exist "bin" mkdir "bin" >nul 2>&1
+if not exist "data" mkdir "data" >nul 2>&1
+if not exist "downloads" mkdir "downloads" >nul 2>&1
 
 :: ===================================================================
 :: 1. Verify / Auto-Install Python Environment
@@ -36,7 +41,7 @@ for /f "tokens=*" %%i in ('!PYTHON_EXE! --version 2^>^&1') do echo [✓] Found %
 :: 2. Install Python Dependencies
 :: ===================================================================
 echo.
-echo [2/5] Installing Python dependencies (colorama, pyperclip)...
+echo [2/5] Installing Python dependencies (colorama, pyperclip, yt-dlp)...
 !PYTHON_EXE! -m pip install -r requirements.txt --quiet --disable-pip-version-check
 if !errorlevel! neq 0 (
     echo [!] Pip install encountered an issue, retrying with user flag...
@@ -49,8 +54,13 @@ echo [✓] Python dependencies installed successfully.
 :: ===================================================================
 echo.
 echo [3/5] Checking yt-dlp executable...
+if exist "bin\yt-dlp.exe" (
+    echo [✓] Found bin\yt-dlp.exe.
+    goto :YTDLP_READY
+)
 if exist "yt-dlp.exe" (
-    echo [✓] Found yt-dlp.exe.
+    move /y "yt-dlp.exe" "bin\yt-dlp.exe" >nul
+    echo [✓] Found yt-dlp.exe (moved to bin/).
     goto :YTDLP_READY
 )
 where yt-dlp >nul 2>&1
@@ -59,10 +69,10 @@ if %errorlevel% equ 0 (
     goto :YTDLP_READY
 )
 
-echo [*] yt-dlp.exe not found. Downloading latest official release from GitHub...
+echo [*] yt-dlp.exe not found. Downloading latest official release from GitHub into bin/...
 call :DOWNLOAD_YTDLP
-if exist "yt-dlp.exe" (
-    echo [✓] Downloaded yt-dlp.exe successfully.
+if exist "bin\yt-dlp.exe" (
+    echo [✓] Downloaded bin\yt-dlp.exe successfully.
 ) else (
     echo [X] Could not download yt-dlp.exe automatically. Please download manually from https://github.com/yt-dlp/yt-dlp/releases
 )
@@ -74,8 +84,14 @@ if exist "yt-dlp.exe" (
 :: ===================================================================
 echo.
 echo [4/5] Checking FFmpeg binaries...
+if exist "bin\ffmpeg.exe" (
+    echo [✓] Found bin\ffmpeg.exe.
+    goto :FFMPEG_READY
+)
 if exist "ffmpeg.exe" (
-    echo [✓] Found ffmpeg.exe.
+    move /y "ffmpeg.exe" "bin\ffmpeg.exe" >nul
+    if exist "ffprobe.exe" move /y "ffprobe.exe" "bin\ffprobe.exe" >nul
+    echo [✓] Found ffmpeg.exe (moved to bin/).
     goto :FFMPEG_READY
 )
 where ffmpeg >nul 2>&1
@@ -84,13 +100,13 @@ if %errorlevel% equ 0 (
     goto :FFMPEG_READY
 )
 
-echo [*] FFmpeg not found. Downloading standalone Windows build...
+echo [*] FFmpeg not found. Downloading standalone Windows build into bin/...
 echo     (This may take 1-2 minutes depending on your internet connection)
 call :DOWNLOAD_FFMPEG
-if exist "ffmpeg.exe" (
-    echo [✓] FFmpeg installed successfully.
+if exist "bin\ffmpeg.exe" (
+    echo [✓] FFmpeg installed successfully into bin/.
 ) else (
-    echo [!] Could not auto-download FFmpeg. Please install FFmpeg and place ffmpeg.exe in this folder.
+    echo [!] Could not auto-download FFmpeg. Please install FFmpeg and place ffmpeg.exe in bin/.
 )
 
 :FFMPEG_READY
@@ -100,10 +116,10 @@ if exist "ffmpeg.exe" (
 :: ===================================================================
 echo.
 echo [5/5] Initializing configuration and downloads directory...
-if not exist "config.json" (
-    if exist "config.example.json" (
-        copy "config.example.json" "config.json" >nul
-        echo [✓] Created default config.json.
+if not exist "data\config.json" (
+    if exist "data\config.example.json" (
+        copy "data\config.example.json" "data\config.json" >nul
+        echo [✓] Created default data\config.json.
     )
 )
 if not exist "downloads" (
@@ -123,8 +139,8 @@ if "%~1"=="--from-run" (
 )
 
 echo You can now:
-echo   - Double-click 'run.bat' to launch the workstation
-echo   - Run 'create_desktop_shortcut.bat' to place an icon on your Desktop
+echo   - Double-click 'run.bat' in the main folder to launch
+echo   - Run 'scripts\create_desktop_shortcut.bat' to pin an icon on your Desktop
 echo.
 pause
 exit /b 0
@@ -190,9 +206,9 @@ exit /b 0
 :DOWNLOAD_YTDLP
 where curl.exe >nul 2>&1
 if %errorlevel% equ 0 (
-    curl.exe -L -# -o "yt-dlp.exe" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+    curl.exe -L -# -o "bin\yt-dlp.exe" "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
 ) else (
-    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe', 'yt-dlp.exe')"
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe', 'bin\yt-dlp.exe')"
 )
 exit /b 0
 
@@ -204,10 +220,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$zip = 'ffmpeg-temp.zip';" ^
     "Write-Host '    Downloading FFmpeg essentials...';" ^
     "(New-Object Net.WebClient).DownloadFile('https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip', $zip);" ^
-    "Write-Host '    Extracting binaries...';" ^
+    "Write-Host '    Extracting binaries into bin/...';" ^
     "Expand-Archive -Path $zip -DestinationPath 'ffmpeg-temp' -Force;" ^
-    "Get-ChildItem -Path 'ffmpeg-temp' -Recurse -Filter '*.exe' | Move-Item -Destination . -Force;" ^
+    "Get-ChildItem -Path 'ffmpeg-temp' -Recurse -Filter '*.exe' | Move-Item -Destination bin -Force;" ^
     "Remove-Item -Path 'ffmpeg-temp' -Recurse -Force;" ^
     "Remove-Item -Path $zip -Force;"
-if exist "ffplay.exe" del /f /q "ffplay.exe" >nul 2>&1
+if exist "bin\ffplay.exe" del /f /q "bin\ffplay.exe" >nul 2>&1
 exit /b 0

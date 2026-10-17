@@ -54,9 +54,6 @@ Issues = "https://github.com/Realwaan/ytdlp-workstation/issues"
 ytdlp-workstation = "ytdlp_workstation.cli.main:main"
 ytdlp-ws = "ytdlp_workstation.cli.main:main"
 
-[tool.setuptools]
-py-modules = ["auto_downloader", "ytdlp_workstation"]
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ytdlp_workstation*"]

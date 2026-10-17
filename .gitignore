@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Virtual environments
 venv/
@@ -12,6 +13,10 @@ ENV/
 # Local personal user data & history (do NOT commit to git)
 config.json
 history.json
+archive.txt
+data/config.json
+data/history.json
+data/archive.txt
 downloads/
 *.mp4
 *.mkv
@@ -45,6 +50,8 @@ $RECYCLE.BIN/
 
 # Large Precompiled Binaries (>100MB fails GitHub push; use setup.bat to download)
 *.exe
+bin/
+bin/*.exe
 yt-dlp.exe
 ffmpeg.exe
 ffplay.exe

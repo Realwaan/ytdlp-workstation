@@ -278,20 +278,17 @@ Powered by `yt-dlp`:
 
 | Path | Description |
 |---|---|
+| [run.bat](file:///f:/YTDLP/run.bat) | **1-Click Launcher** - Double-click to launch the workstation immediately |
+| [bin/](file:///f:/YTDLP/bin/) | Bundled standalone executables (`yt-dlp.exe`, `ffmpeg.exe`, `ffprobe.exe`, `aria2c.exe`) |
+| [data/](file:///f:/YTDLP/data/) | User configuration, history logs, and download archive (`config.json`, `history.json`, `archive.txt`) |
+| [scripts/](file:///f:/YTDLP/scripts/) | Setup utilities, desktop shortcut creator, and installer scripts |
 | [ytdlp_workstation/](file:///f:/YTDLP/ytdlp_workstation/) | Core modular package (`core/`, `engine/`, `extractors/`, `queue/`, `utils/`, `cli/`) |
-| [tests/](file:///f:/YTDLP/tests/) | Full Pytest automated test suite (23+ unit & integration tests) |
-| [auto_downloader.py](file:///f:/YTDLP/auto_downloader.py) | Backward-compatible entrypoint forwarding to modular package |
-| [ytdlp_workstation.py](file:///f:/YTDLP/ytdlp_workstation.py) | Python module CLI entrypoint |
-| [setup.bat](file:///f:/YTDLP/setup.bat) | 1-Click setup wizard: installs pip modules, downloads `yt-dlp.exe` & `ffmpeg.exe` |
-| [run.bat](file:///f:/YTDLP/run.bat) | One-click Windows batch launcher with UTF-8 console support |
-| [create_desktop_shortcut.bat](file:///f:/YTDLP/create_desktop_shortcut.bat) | Creates an instant desktop shortcut with custom icon |
-| [create_desktop_shortcut.ps1](file:///f:/YTDLP/create_desktop_shortcut.ps1) | PowerShell script backing shortcut creation |
+| [downloads/](file:///f:/YTDLP/downloads/) | Default folder where downloaded media and music are saved |
+| [tests/](file:///f:/YTDLP/tests/) | Full Pytest automated test suite (23 unit & integration tests) |
 | [pyproject.toml](file:///f:/YTDLP/pyproject.toml) | Modern PEP 621 Python package configuration (v2.0) |
 | [requirements.txt](file:///f:/YTDLP/requirements.txt) | Python dependencies (`colorama`, `pyperclip`, `yt-dlp`) |
-| [config.example.json](file:///f:/YTDLP/config.example.json) | Clean configuration template with concurrency & archive settings |
 | [.gitignore](file:///f:/YTDLP/.gitignore) | Git ignore rules excluding binaries (>100MB), personal downloads, and user logs |
 | [LICENSE](file:///f:/YTDLP/LICENSE) | Open source MIT License |
-| `downloads/` | Default folder where downloaded media and music are saved |
 
 ---
 

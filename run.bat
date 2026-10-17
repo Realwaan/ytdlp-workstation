@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-title YT-DLP Auto-Downloader Workstation
+title YT-DLP Supercharged Workstation v2.0
 chcp 65001 >nul
 mode con: cols=100 lines=34
 cd /d "%~dp0"
@@ -17,29 +17,36 @@ if !errorlevel! equ 0 (
     )
 )
 
-:: 2. Check if all required components exist
+:: 2. Ensure bin/ is on PATH
+if exist "%~dp0bin" set "PATH=%~dp0bin;!PATH!"
+
+:: 3. Check if all required components exist
 set "NEED_SETUP=0"
 if "!PYTHON_EXE!"=="" set "NEED_SETUP=1"
-if not exist "yt-dlp.exe" (
+if not exist "bin\yt-dlp.exe" if not exist "yt-dlp.exe" (
     where yt-dlp >nul 2>&1
     if !errorlevel! neq 0 set "NEED_SETUP=1"
 )
-if not exist "ffmpeg.exe" (
+if not exist "bin\ffmpeg.exe" if not exist "ffmpeg.exe" (
     where ffmpeg >nul 2>&1
     if !errorlevel! neq 0 set "NEED_SETUP=1"
 )
 
-:: 3. Run automated 1-Click setup if anything is missing
+:: 4. Run automated 1-Click setup if anything is missing
 if "!NEED_SETUP!"=="1" (
     echo ===================================================================
     echo   ⚡ FIRST-TIME SETUP OR MISSING COMPONENTS DETECTED
     echo   Auto-installing Python, yt-dlp, and FFmpeg for you...
     echo ===================================================================
     echo.
-    call setup.bat --from-run
-    
+    if exist "scripts\setup.bat" (
+        call scripts\setup.bat --from-run
+    ) else if exist "setup.bat" (
+        call setup.bat --from-run
+    )
+
     :: Refresh PATH for current session
-    set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%ProgramFiles%\Python312;%ProgramFiles%\Python312\Scripts;!PATH!"
+    set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%ProgramFiles%\Python312;%ProgramFiles%\Python312\Scripts;%~dp0bin;!PATH!"
 
     python -c "import sys" >nul 2>&1
     if !errorlevel! equ 0 (
@@ -56,11 +63,10 @@ if "!PYTHON_EXE!"=="" (
     exit /b 1
 )
 
-:: 4. Launch the workstation
-!PYTHON_EXE! auto_downloader.py
+:: 5. Launch the workstation package
+!PYTHON_EXE! -m ytdlp_workstation
 if errorlevel 1 (
     echo.
     echo An error occurred. Press any key to exit.
     pause >nul
 )
-

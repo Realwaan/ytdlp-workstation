@@ -16,7 +16,7 @@ MODULE_DIR = Path(__file__).resolve().parent.parent.parent
 def _detect_portable_mode() -> bool:
     """Check if workstation is running in portable folder mode or installed globally."""
     try:
-        if (MODULE_DIR / "setup.bat").exists() or (MODULE_DIR / "run.bat").exists():
+        if (MODULE_DIR / "run.bat").exists() or (MODULE_DIR / "scripts" / "setup.bat").exists() or (MODULE_DIR / "setup.bat").exists():
             test_file = MODULE_DIR / ".write_test"
             test_file.touch()
             test_file.unlink()
@@ -30,26 +30,43 @@ IS_PORTABLE = _detect_portable_mode()
 
 if IS_PORTABLE:
     BASE_DIR = MODULE_DIR
-    USER_DATA_DIR = MODULE_DIR
+    BIN_DIR = BASE_DIR / "bin"
+    DATA_DIR = BASE_DIR / "data"
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    USER_DATA_DIR = DATA_DIR
     DEFAULT_DOWNLOAD_DIR = MODULE_DIR / "downloads"
 else:
     USER_DATA_DIR = Path.home() / ".ytdlp-workstation"
     USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     BASE_DIR = USER_DATA_DIR
+    BIN_DIR = BASE_DIR / "bin"
+    DATA_DIR = USER_DATA_DIR
     DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads" / "YT-DLP"
 
+
+def _find_binary(name: str) -> Path:
+    """Locate executable in bin/ subfolder or root folder."""
+    if (BIN_DIR / name).exists():
+        return BIN_DIR / name
+    if (BASE_DIR / name).exists():
+        return BASE_DIR / name
+    return BIN_DIR / name
+
+
+YTDLP_EXE = _find_binary("yt-dlp.exe")
+FFMPEG_EXE = _find_binary("ffmpeg.exe")
+ARIA2C_EXE = _find_binary("aria2c.exe")
+
 # Ensure binary paths are appended to PATH so bundled binaries are found
-for _p in [str(BASE_DIR), str(MODULE_DIR)]:
+for _p in [str(BIN_DIR), str(BASE_DIR), str(MODULE_DIR)]:
     if _p not in os.environ.get("PATH", ""):
         os.environ["PATH"] = _p + os.pathsep + os.environ.get("PATH", "")
 
-# Key file paths
-CONFIG_FILE = USER_DATA_DIR / "config.json"
-HISTORY_FILE = USER_DATA_DIR / "history.json"
-ARCHIVE_FILE = USER_DATA_DIR / "archive.txt"
-YTDLP_EXE = BASE_DIR / "yt-dlp.exe"
-FFMPEG_EXE = BASE_DIR / "ffmpeg.exe"
-ARIA2C_EXE = BASE_DIR / "aria2c.exe"
+# Key file paths (organized in data/ folder)
+CONFIG_FILE = DATA_DIR / "config.json" if (DATA_DIR / "config.json").exists() else (USER_DATA_DIR / "config.json")
+HISTORY_FILE = DATA_DIR / "history.json"
+ARCHIVE_FILE = DATA_DIR / "archive.txt"
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "clipboard_mode": "auto",           # 'auto', 'prompt', 'off'

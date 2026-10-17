@@ -1,11 +1,15 @@
+$repoRoot = (Get-Item $PSScriptRoot).Parent.FullName
 $desktop = [Environment]::GetFolderPath('Desktop')
 $wsh = New-Object -ComObject WScript.Shell
-$shortcutPath = Join-Path $desktop "YT-DLP Auto-Downloader.lnk"
+$shortcutPath = Join-Path $desktop "YT-DLP Workstation.lnk"
 $shortcut = $wsh.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = Join-Path $PSScriptRoot "run.bat"
-$shortcut.WorkingDirectory = $PSScriptRoot
+$shortcut.TargetPath = Join-Path $repoRoot "run.bat"
+$shortcut.WorkingDirectory = $repoRoot
 $shortcut.Description = "Automated YT-DLP Clipboard Downloader"
-$shortcut.IconLocation = "$PSScriptRoot\yt-dlp.exe,0"
+$iconPath = Join-Path $repoRoot "bin\yt-dlp.exe"
+if (Test-Path $iconPath) {
+    $shortcut.IconLocation = "$iconPath,0"
+}
 $shortcut.Save()
 
 Write-Host ""
