@@ -14,6 +14,7 @@ from ..core.state import DownloadJob
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..utils.system import cleanup_orphaned_fragments, set_console_title, reset_console_title
 from .format_builder import build_subprocess_command
+from .fragment_merger import find_fragment_groups, merge_fragment_group
 from .process_supervisor import SUPERVISOR
 
 _ARIA2_RE = re.compile(
@@ -122,7 +123,24 @@ def run_subprocess_download(
 
         proc.wait()
         success = (proc.returncode == 0)
-        if not success and job.progress_pct >= 99.0:
+
+        # If unmerged *-Frag<N> files remain on disk after download reached >=95% (or returncode 0),
+        # stitch them in-order and remux via FFmpeg while reporting live progress to the terminal.
+        frag_groups = find_fragment_groups(Path(effective_target))
+        if frag_groups and (success or job.progress_pct >= 95.0) and not job.is_cancelled.is_set():
+            for base_name, frags in frag_groups.items():
+                merged_path = merge_fragment_group(
+                    directory=Path(effective_target),
+                    base_name=base_name,
+                    frags=frags,
+                    output_title=job.display_title,
+                    job=job,
+                    on_progress=on_progress,
+                )
+                if merged_path and merged_path.exists():
+                    job.saved_filename = merged_path.name
+                    success = True
+        elif not success and not frag_groups and job.progress_pct >= 99.0:
             success = True
 
         if success:

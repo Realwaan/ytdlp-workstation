@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.state import STATE, DownloadJob, AppState, resolve_state
-from ..core.config import YTDLP_EXE
+from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..queue.manager import QueueManager
+from ..engine.fragment_merger import find_fragment_groups
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
 from . import inbox
 from .ui import Fore, Style, print_banner, format_linux_bar
@@ -68,7 +69,14 @@ def run_repl(queue_mgr: QueueManager, state: Optional[AppState] = None):
     """Run the interactive REPL loop until stop_requested is set."""
     state = _resolve_state(state)
     print_banner(active_workers=queue_mgr.max_workers, state=state)
-    cleanup_orphaned_fragments()
+    dl_dir = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    frag_groups = find_fragment_groups(dl_dir)
+    if frag_groups:
+        total_f = sum(len(v) for v in frag_groups.values())
+        print(
+            f"  {Fore.YELLOW}[⚡] Detected {total_f} unmerged video fragment(s) in {dl_dir.name}/!{Style.RESET_ALL}\n"
+            f"      {Fore.LIGHTWHITE_EX}Type {Fore.CYAN}merge <Movie Name>{Fore.LIGHTWHITE_EX} (or {Fore.CYAN}merge{Fore.LIGHTWHITE_EX}) to stitch them into a single MP4.{Style.RESET_ALL}\n"
+        )
     check_for_updates_background(state=state)
 
     # Start clipboard watcher thread

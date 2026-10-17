@@ -120,6 +120,8 @@ def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
   {Fore.LIGHTBLACK_EX}──────────────────────────────────────────────────────────────────{Style.RESET_ALL}
   {Fore.LIGHTYELLOW_EX}POWER COMMANDS:{Style.RESET_ALL}
   {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Paste URL directly to download
+  {Fore.CYAN}name <title> [URL]{Style.RESET_ALL}      : Download with custom movie/video filename
+  {Fore.CYAN}merge [movie name]{Style.RESET_ALL}      : Stitch & remux any unmerged *-Frag* files into MP4
   {Fore.CYAN}play <song/video>{Style.RESET_ALL}       : Search YouTube Music & instant download as 320k MP3
   {Fore.CYAN}yt <query>{Style.RESET_ALL}                 : Search YouTube and pick from top 5 results
   {Fore.CYAN}info [URL]{Style.RESET_ALL}                 : Inspect video details, max resolution, audio & subs
@@ -186,6 +188,8 @@ def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, e
 
     if d_str and t_str:
         size_str = f"{d_str}/{t_str}"
+        if f_str and f_str != "NA/NA":
+            size_str += f" (frag {f_str})"
     elif d_str:
         size_str = d_str
     elif f_str and f_str != "NA/NA":

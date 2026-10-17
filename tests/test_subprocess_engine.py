@@ -182,3 +182,41 @@ def test_subprocess_aria2c_progress_parsing(tmp_path):
     assert ("DOWNLOADING", 35.0, "12MiB/s") in progress_snapshots
     assert ("PROCESSING", 100.0, "12MiB/s") in progress_snapshots
 
+
+def test_fragment_merger_stitches_and_cleans_up(tmp_path):
+    from ytdlp_workstation.engine.fragment_merger import (
+        find_fragment_groups,
+        merge_fragment_group,
+    )
+
+    base = "movie [2160p].mp4"
+    (tmp_path / base).write_bytes(b"INIT_SEGMENT_")
+    (tmp_path / f"{base}.ytdl").write_text("{}", encoding="utf-8")
+    (tmp_path / f"{base}-Frag1").write_bytes(b"FRAG1_")
+    (tmp_path / f"{base}-Frag2").write_bytes(b"FRAG2")
+
+    groups = find_fragment_groups(tmp_path)
+    assert base in groups
+    assert len(groups[base]) == 2
+
+    progress_updates = []
+    with patch("ytdlp_workstation.engine.fragment_merger.subprocess.run") as mock_ff:
+        mock_ff.return_value = MagicMock(returncode=1)  # keep raw stitched file for byte assertion
+        merged = merge_fragment_group(
+            directory=tmp_path,
+            base_name=base,
+            frags=groups[base],
+            output_title="Clean Movie Title",
+            on_progress=lambda j: progress_updates.append((j.status, j.fragment_str)),
+        )
+
+    assert merged is not None
+    assert merged.name == "Clean Movie Title.mp4"
+    assert merged.read_bytes() == b"INIT_SEGMENT_FRAG1_FRAG2"
+    assert not (tmp_path / f"{base}-Frag1").exists()
+    assert not (tmp_path / f"{base}-Frag2").exists()
+    assert not (tmp_path / f"{base}.ytdl").exists()
+    assert ("DOWNLOADING", "1/2") in progress_updates
+    assert ("DOWNLOADING", "2/2") in progress_updates
+
+

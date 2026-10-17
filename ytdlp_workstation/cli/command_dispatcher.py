@@ -13,6 +13,7 @@ __all__ = [
 ]
 
 import os
+import sys
 import subprocess
 import urllib.parse
 from pathlib import Path
@@ -26,9 +27,10 @@ from ..extractors.url_detector import is_valid_media_url, extract_media_url, GEN
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url
+from ..engine.fragment_merger import find_fragment_groups, merge_all_pending_fragments
 from ..utils.system import sanitize_filename
 from .console import CONSOLE
-from .ui import Fore, Style, print_banner
+from .ui import Fore, Style, print_banner, format_job_progress, format_linux_bar
 from .input_reader import prompt_video_quality, inspect_and_pick_formats, ask_text
 from .commands import (
     cmd_play,
@@ -322,6 +324,44 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
             enqueue_media_url(m_url, queue_mgr, state=state, display_title=custom_title)
         else:
             print(f"{Fore.RED}[!] Usage: name <Movie Title> <URL>{Style.RESET_ALL}\n")
+    elif first_word == "merge":
+        dl_dir = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+        groups = find_fragment_groups(dl_dir)
+        if not groups:
+            print(f"{Fore.YELLOW}[!] No unmerged *-Frag* files found in {dl_dir}.{Style.RESET_ALL}\n")
+        else:
+            custom_title = arg_part.strip(" \"'") if arg_part else ask_text("🎬 Output Movie Name (or press Enter for default): ", state).strip(" \"'")
+            total_f = sum(len(v) for v in groups.values())
+            print(f"\n{Fore.CYAN}[⚡] Merging {total_f} fragments into MP4 video...{Style.RESET_ALL}")
+
+            def _merge_prog(j: DownloadJob):
+                if CONSOLE.live:
+                    CONSOLE.set_status(j.id, format_job_progress(j))
+                else:
+                    sys.stdout.write(
+                        format_linux_bar(
+                            j.display_title or j.url,
+                            j.progress_pct,
+                            j.downloaded_str,
+                            j.total_str,
+                            j.speed_str,
+                            j.eta_str,
+                            j.fragment_str,
+                            status=j.status,
+                        )
+                    )
+                    sys.stdout.flush()
+
+            merged = merge_all_pending_fragments(
+                directory=dl_dir,
+                output_title=custom_title or None,
+                on_progress=_merge_prog,
+            )
+            for k in list(CONSOLE._status.keys()):
+                CONSOLE.clear_status(k)
+            for mp in merged:
+                sz_gb = mp.stat().st_size / (1024 ** 3)
+                print(f"{Fore.GREEN}[✓] Merged Complete:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{mp.name}{Style.RESET_ALL} ({sz_gb:.2f} GB)\n")
     elif is_spotify_url(raw):
         enqueue_spotify_download(raw.strip("\"'"), queue_mgr, state=state)
     elif is_valid_media_url(raw) or GENERIC_URL_REGEX.search(raw):
