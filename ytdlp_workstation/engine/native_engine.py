@@ -12,6 +12,7 @@ from ..core.state import DownloadJob
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..utils.system import cleanup_orphaned_fragments, set_console_title, reset_console_title
 from .format_builder import build_native_ytdlp_opts
+from .fragment_merger import find_fragment_groups, merge_fragment_group
 from .subprocess_engine import run_subprocess_download
 
 try:
@@ -127,6 +128,21 @@ def execute_download_job(
 
             success = (ret_code == 0)
 
+            frag_groups = find_fragment_groups(Path(effective_target))
+            if frag_groups and not job.is_cancelled.is_set():
+                for base_name, frags in frag_groups.items():
+                    merged_path = merge_fragment_group(
+                        directory=Path(effective_target),
+                        base_name=base_name,
+                        frags=frags,
+                        output_title=job.display_title,
+                        job=job,
+                        on_progress=on_progress,
+                    )
+                    if merged_path and merged_path.exists():
+                        job.saved_filename = merged_path.name
+                        success = True
+
             if success:
                 job.status = "COMPLETED"
                 job.progress_pct = 100.0
@@ -135,7 +151,6 @@ def execute_download_job(
             else:
                 job.status = "FAILED"
                 job.error_message = f"yt-dlp returned error code {ret_code}"
-                cleanup_orphaned_fragments(Path(effective_target))
 
             return success
 

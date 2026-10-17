@@ -17,7 +17,7 @@ from typing import Optional
 from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..queue.manager import QueueManager
-from ..engine.fragment_merger import find_fragment_groups
+from ..engine.fragment_merger import find_fragment_groups, merge_fragment_group
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
 from . import inbox
 from .ui import Fore, Style, print_banner, format_linux_bar
@@ -74,9 +74,28 @@ def run_repl(queue_mgr: QueueManager, state: Optional[AppState] = None):
     if frag_groups:
         total_f = sum(len(v) for v in frag_groups.values())
         print(
-            f"  {Fore.YELLOW}[⚡] Detected {total_f} unmerged video fragment(s) in {dl_dir.name}/!{Style.RESET_ALL}\n"
-            f"      {Fore.LIGHTWHITE_EX}Type {Fore.CYAN}merge <Movie Name>{Fore.LIGHTWHITE_EX} (or {Fore.CYAN}merge{Fore.LIGHTWHITE_EX}) to stitch them into a single MP4.{Style.RESET_ALL}\n"
+            f"  {Fore.YELLOW}[⚡] Auto-merging {total_f} unmerged video fragment(s) found in {dl_dir.name}/...{Style.RESET_ALL}\n"
         )
+
+        def _auto_merge_startup():
+            for base_name, frags in list(frag_groups.items()):
+                m_job = DownloadJob(url=base_name, display_title=base_name)
+                out = merge_fragment_group(
+                    directory=dl_dir,
+                    base_name=base_name,
+                    frags=frags,
+                    job=m_job,
+                    on_progress=queue_mgr.on_job_progress,
+                )
+                if out and out.exists():
+                    b = out.stat().st_size
+                    m_job.saved_filename = out.name
+                    m_job.saved_filesize_str = f"{b / (1024 ** 3):.2f} GB" if b >= 1024 ** 3 else f"{b / (1024 ** 2):.1f} MB"
+                    if queue_mgr.on_job_finished:
+                        queue_mgr.on_job_finished(m_job, True)
+
+        threading.Thread(target=_auto_merge_startup, name="StartupFragmentMerger", daemon=True).start()
+
     check_for_updates_background(state=state)
 
     # Start clipboard watcher thread

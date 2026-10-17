@@ -15,6 +15,7 @@ from ..core.config import DEFAULT_DOWNLOAD_DIR
 from ..core.presets import get_preset
 from ..core.events import BUS, EventType
 from ..engine.native_engine import execute_download_job
+from ..engine.fragment_merger import find_fragment_groups, merge_fragment_group
 from ..extractors.spotify import embed_cover_art_ffmpeg
 from ..utils.notifications import play_sound, send_windows_toast
 
@@ -96,6 +97,25 @@ class QueueManager:
             archive_path=archive_path,
             on_progress=self._handle_progress
         )
+
+        # Post-download folder check: if any *-Frag* files remain in the target directory,
+        # automatically stitch and remux them into the final MP4 with live progress.
+        if not job.is_cancelled.is_set():
+            frag_groups = find_fragment_groups(Path(effective_target))
+            if frag_groups:
+                for base_name, frags in frag_groups.items():
+                    merged_path = merge_fragment_group(
+                        directory=Path(effective_target),
+                        base_name=base_name,
+                        frags=frags,
+                        output_title=job.display_title,
+                        job=job,
+                        on_progress=self._handle_progress,
+                    )
+                    if merged_path and merged_path.exists():
+                        job.saved_filename = merged_path.name
+                        job. finish_time = time.time()
+                        success = True
 
         duration = round(job.finish_time - job.start_time, 1) if job.finish_time and job.start_time else 0.0
 

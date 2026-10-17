@@ -124,10 +124,10 @@ def run_subprocess_download(
         proc.wait()
         success = (proc.returncode == 0)
 
-        # If unmerged *-Frag<N> files remain on disk after download reached >=95% (or returncode 0),
-        # stitch them in-order and remux via FFmpeg while reporting live progress to the terminal.
+        # Always check the download folder after yt-dlp finishes: if *-Frag<N> files remain
+        # (and the job was not cancelled), automatically stitch and remux them into a single MP4.
         frag_groups = find_fragment_groups(Path(effective_target))
-        if frag_groups and (success or job.progress_pct >= 95.0) and not job.is_cancelled.is_set():
+        if frag_groups and not job.is_cancelled.is_set():
             for base_name, frags in frag_groups.items():
                 merged_path = merge_fragment_group(
                     directory=Path(effective_target),
