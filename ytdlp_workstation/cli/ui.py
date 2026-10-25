@@ -48,117 +48,192 @@ def clear_screen() -> None:
 
 
 def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
-    """Print the cyber-styled terminal banner and status dashboard."""
+    """Print the sleek, compact terminal banner (under 10 lines)."""
     state = _resolve_state(state)
     clear_screen()
     preset_info = PRESETS.get(state.config.get("preset", 1), PRESETS[1])
     clip_mode = state.config.get("clipboard_mode", "auto").upper()
 
     if clip_mode == "AUTO":
-        clip_badge = f"{Back.GREEN}{Fore.BLACK} ACTIVE (AUTO-DETECT) {Style.RESET_ALL}"
+        clip_badge = f"{Fore.GREEN}AUTO{Style.RESET_ALL}"
     elif clip_mode == "PROMPT":
-        clip_badge = f"{Back.YELLOW}{Fore.BLACK} ACTIVE (ASK FIRST) {Style.RESET_ALL}"
+        clip_badge = f"{Fore.YELLOW}PROMPT{Style.RESET_ALL}"
     else:
-        clip_badge = f"{Back.RED}{Fore.WHITE} DISABLED {Style.RESET_ALL}"
+        clip_badge = f"{Fore.RED}OFF{Style.RESET_ALL}"
 
     ask_quality = state.config.get("ask_quality_each_time", True)
     if ask_quality:
-        quality_badge = f"{Back.MAGENTA}{Fore.WHITE} PICK ON DOWNLOAD {Style.RESET_ALL} {Fore.LIGHTMAGENTA_EX}(Single-key choices per link){Style.RESET_ALL}"
+        quality_badge = f"{Fore.MAGENTA}PICK{Style.RESET_ALL}"
     else:
-        quality_badge = f"{Back.BLUE}{Fore.WHITE} AUTO USE PRESET {Style.RESET_ALL} {Fore.GREEN}#{state.config.get('preset', 1)} ({preset_info['name']}){Style.RESET_ALL}"
-
-    cookies_mode = state.config.get("browser_cookies", "none").upper()
-    cookies_badge = f"{Fore.GREEN}{cookies_mode}{Style.RESET_ALL}" if cookies_mode != "NONE" else f"{Fore.LIGHTBLACK_EX}NONE{Style.RESET_ALL}"
-
-    subs_mode = state.config.get("subtitles_mode", "off").upper()
-    subs_badge = f"{Fore.GREEN}{subs_mode}{Style.RESET_ALL}" if subs_mode != "OFF" else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
-
-    speed_limit = state.config.get("speed_limit", "none").upper()
-    speed_badge = f"{Fore.YELLOW}{speed_limit}{Style.RESET_ALL}" if speed_limit != "NONE" else f"{Fore.LIGHTBLACK_EX}UNLIMITED{Style.RESET_ALL}"
-
-    sb_mode = state.config.get("sponsorblock", False)
-    sb_badge = f"{Fore.GREEN}ON{Style.RESET_ALL}" if sb_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
+        p_name = preset_info.get("name", "Default")[:12]
+        quality_badge = f"{Fore.GREEN}#{state.config.get('preset', 1)} {p_name}{Style.RESET_ALL}"
 
     archive_mode = state.config.get("use_download_archive", True)
-    archive_badge = f"{Fore.GREEN}ACTIVE (Skip Duplicates){Style.RESET_ALL}" if archive_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
+    archive_badge = f"{Fore.GREEN}ON{Style.RESET_ALL}" if archive_mode else f"{Fore.LIGHTBLACK_EX}OFF{Style.RESET_ALL}"
 
     download_folder = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
     free_gb = get_free_disk_space_gb(download_folder)
-    if free_gb >= 10.0:
-        disk_badge = f"{Fore.GREEN}{free_gb} GB Free{Style.RESET_ALL}"
-    elif free_gb >= 0.0:
-        disk_badge = f"{Fore.RED}⚠️ LOW: {free_gb} GB Free{Style.RESET_ALL}"
-    else:
-        disk_badge = f"{Fore.LIGHTBLACK_EX}Available{Style.RESET_ALL}"
+    disk_badge = f"{free_gb} GB Free" if free_gb >= 0.0 else "Available"
 
-    engine_badge = f"{Back.CYAN}{Fore.BLACK} 16x GIGABIT TURBO (ARIA2C + NATIVE MULTI-STREAM) {Style.RESET_ALL}" if ARIA2C_EXE.exists() else f"{Back.GREEN}{Fore.BLACK} NATIVE YOUTUBEDL ENGINE {Style.RESET_ALL}"
+    engine_badge = f"{Fore.CYAN}16x TURBO (ARIA2C){Style.RESET_ALL}" if ARIA2C_EXE.exists() else f"{Fore.GREEN}NATIVE YT-DLP{Style.RESET_ALL}"
     active_site = getattr(state, "last_seen_website", None) or state.config.get("default_stream_referer", "https://movy.sx/")
     workers_cnt = state.config.get("max_concurrent_downloads", 2)
 
-    banner = f"""{Fore.CYAN}
-  ██╗   ██╗████████╗   ██████╗ ██╗     ██████╗ 
-  ╚██╗ ██╔╝╚══██╔══╝   ██╔══██╗██║     ██╔══██╗
-   ╚████╔╝    ██║█████╗██║  ██║██║     ██████╔╝
-    ╚██╔╝     ██║╚════╝██║  ██║██║     ██╔═══╝ 
-     ██║      ██║      ██████╔╝███████╗██║     
-     ╚═╝      ╚═╝      ╚═════╝ ╚══════╝╚═╝     
-   {Style.BRIGHT}{Fore.YELLOW}★ SUPERCHARGED DOWNLOAD WORKSTATION v2.0 ★{Style.RESET_ALL}
-{Fore.LIGHTBLACK_EX}══════════════════════════════════════════════════════════════════════{Style.RESET_ALL}
-  {Fore.WHITE}[●] ENGINE SPEED       :{Style.RESET_ALL} {engine_badge}
-  {Fore.WHITE}[●] PARALLEL WORKERS   :{Style.RESET_ALL} {Fore.GREEN}{workers_cnt} Concurrent Stream(s){Style.RESET_ALL}
-  {Fore.WHITE}[●] CLIPBOARD MONITOR  :{Style.RESET_ALL} {clip_badge}
-  {Fore.WHITE}[●] STREAMING DETECTOR :{Style.RESET_ALL} {Fore.GREEN}{active_site}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}(Auto-attaches referer){Style.RESET_ALL}
-  {Fore.WHITE}[●] DOWNLOAD ARCHIVE   :{Style.RESET_ALL} {archive_badge}
-  {Fore.WHITE}[●] QUALITY MODE       :{Style.RESET_ALL} {quality_badge}
-  {Fore.WHITE}[●] BROWSER COOKIES    :{Style.RESET_ALL} {cookies_badge} (Bypasses login & age walls)
-  {Fore.WHITE}[●] SUBTITLES          :{Style.RESET_ALL} {subs_badge} | {Fore.WHITE}SPEED LIMIT:{Style.RESET_ALL} {speed_badge} | {Fore.WHITE}SPONSORBLOCK:{Style.RESET_ALL} {sb_badge}
-  {Fore.WHITE}[●] SAVE DIRECTORY     :{Style.RESET_ALL} {Fore.CYAN}{download_folder}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}({disk_badge}{Fore.LIGHTBLACK_EX}){Style.RESET_ALL}
-{Fore.LIGHTBLACK_EX}══════════════════════════════════════════════════════════════════════{Style.RESET_ALL}
-  {Style.BRIGHT}{Fore.LIGHTWHITE_EX}HOW TO DOWNLOAD:{Style.RESET_ALL}
-  {Fore.LIGHTGREEN_EX}▶ Just COPY any video OR Spotify link in your browser!{Style.RESET_ALL}
-    Terminal detects it immediately and prompts for quality or downloads.
-  {Fore.LIGHTBLACK_EX}──────────────────────────────────────────────────────────────────{Style.RESET_ALL}
-  {Fore.LIGHTYELLOW_EX}POWER COMMANDS:{Style.RESET_ALL}
-  {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Paste URL directly to download
-  {Fore.CYAN}name <title> [URL]{Style.RESET_ALL}      : Download with custom movie/video filename
-  {Fore.CYAN}merge [movie name]{Style.RESET_ALL}      : Stitch & remux any unmerged *-Frag* files into MP4
-  {Fore.CYAN}play <song/video>{Style.RESET_ALL}       : Search YouTube Music & instant download as 320k MP3
-  {Fore.CYAN}yt <query>{Style.RESET_ALL}                 : Search YouTube and pick from top 5 results
-  {Fore.CYAN}info [URL]{Style.RESET_ALL}                 : Inspect video details, max resolution, audio & subs
-  {Fore.CYAN}spotify [URL]{Style.RESET_ALL}           : Download Spotify track, album, or playlist (320kbps MP3)
-  {Fore.CYAN}queue{Style.RESET_ALL} / {Fore.CYAN}qstatus{Style.RESET_ALL}            : View active parallel workers and pending jobs
-  {Fore.CYAN}workers <1-5>{Style.RESET_ALL}             : Set max concurrent parallel downloads (e.g. workers 3)
-  {Fore.CYAN}site <name/url>{Style.RESET_ALL}         : Switch active streaming site (e.g. {Fore.YELLOW}site cinejoy{Style.RESET_ALL} or {Fore.YELLOW}site movy{Style.RESET_ALL})
-  {Fore.CYAN}trim <start>-<end> [URL]{Style.RESET_ALL} : Download specific time clip (e.g. {Fore.YELLOW}trim 01:15-02:30 URL{Style.RESET_ALL})
-  {Fore.CYAN}items <range> [URL]{Style.RESET_ALL}      : Download playlist items (e.g. {Fore.YELLOW}items 1-5 URL{Style.RESET_ALL})
-  {Fore.CYAN}1080p [URL]{Style.RESET_ALL}             : Download in 1080p Full HD
-  {Fore.CYAN}720p [URL]{Style.RESET_ALL}              : Download in 720p HD
-  {Fore.CYAN}4k [URL]{Style.RESET_ALL}                : Download in 4K / Best Quality
-  {Fore.CYAN}mp3 [URL]{Style.RESET_ALL}               : Download as MP3 (320kbps)
-  {Fore.CYAN}m4a [URL]{Style.RESET_ALL}               : Download as Original AAC Audio (.m4a)
-  {Fore.CYAN}flac [URL]{Style.RESET_ALL}              : Download as Lossless Studio FLAC
-  {Fore.CYAN}subs [lang] [URL]{Style.RESET_ALL}        : Embed subtitles (e.g. {Fore.YELLOW}subs en URL{Style.RESET_ALL} or {Fore.YELLOW}subs list URL{Style.RESET_ALL})
-  {Fore.CYAN}sb [on/off]{Style.RESET_ALL}              : Toggle SponsorBlock (auto-skip sponsors/promos)
-  {Fore.CYAN}ref [site] [URL]{Style.RESET_ALL}        : Cloud stream with Referer (or type 'ref' alone for guided)
-  {Fore.CYAN}f [URL]{Style.RESET_ALL}                 : Inspect & pick from ALL exact format codes (-F)
-  {Fore.CYAN}cookies <browser>{Style.RESET_ALL}       : Set cookies (chrome / edge / firefox / brave / off)
-  {Fore.CYAN}limit <rate>{Style.RESET_ALL}            : Set speed limit (e.g. limit 5M, limit 10M, limit off)
-  {Fore.CYAN}p{Style.RESET_ALL} or {Fore.CYAN}preset{Style.RESET_ALL}              : Choose default quality preset (1-12)
-  {Fore.CYAN}qmode{Style.RESET_ALL}                   : Toggle Quality Picker (Pick Choices / Auto Preset)
-  {Fore.CYAN}c{Style.RESET_ALL} or {Fore.CYAN}clip{Style.RESET_ALL}                : Toggle Clipboard Mode (Auto / Prompt / Off)
-  {Fore.CYAN}o{Style.RESET_ALL} or {Fore.CYAN}open{Style.RESET_ALL}                : Open Downloads Folder in Explorer
-  {Fore.CYAN}d{Style.RESET_ALL} or {Fore.CYAN}dir{Style.RESET_ALL}                 : Change Downloads Folder
-  {Fore.CYAN}h{Style.RESET_ALL} or {Fore.CYAN}history{Style.RESET_ALL} [clear]     : View Download History (or 'h clear' to reset)
-  {Fore.CYAN}s{Style.RESET_ALL} or {Fore.CYAN}settings{Style.RESET_ALL}            : Full Settings Menu
-  {Fore.CYAN}u{Style.RESET_ALL} or {Fore.CYAN}update{Style.RESET_ALL}              : Update yt-dlp to latest version
-  {Fore.CYAN}cls{Style.RESET_ALL}                    : Clear screen and refresh status
-  {Fore.CYAN}q{Style.RESET_ALL} or {Fore.CYAN}exit{Style.RESET_ALL}                : Exit
-{Fore.LIGHTBLACK_EX}══════════════════════════════════════════════════════════════════════{Style.RESET_ALL}
+    banner = f"""{Fore.CYAN}  ⚡ YT-DLP WORKSTATION v2.0 {Fore.LIGHTBLACK_EX}──────────────────────────────────────────────────{Style.RESET_ALL}
+  {Fore.WHITE}[●] Engine  :{Style.RESET_ALL} {engine_badge:<25} {Fore.WHITE}[●] Workers :{Style.RESET_ALL} {Fore.GREEN}{workers_cnt} Stream(s){Style.RESET_ALL}
+  {Fore.WHITE}[●] Monitor :{Style.RESET_ALL} {clip_badge:<21} {Fore.WHITE}[●] Archive :{Style.RESET_ALL} {archive_badge}
+  {Fore.WHITE}[●] Quality :{Style.RESET_ALL} {quality_badge:<25} {Fore.WHITE}[●] Referer :{Style.RESET_ALL} {Fore.GREEN}{active_site}{Style.RESET_ALL}
+  {Fore.WHITE}[●] Folder  :{Style.RESET_ALL} {Fore.CYAN}{download_folder}{Style.RESET_ALL} {Fore.LIGHTBLACK_EX}({disk_badge}){Style.RESET_ALL}
+  {Fore.LIGHTBLACK_EX}─────────────────────────────────────────────────────────────────────────────{Style.RESET_ALL}
+  {Fore.LIGHTGREEN_EX}▶ Paste any link or type {Fore.YELLOW}help{Fore.LIGHTGREEN_EX} for categorized commands. Tab autocompletes.{Style.RESET_ALL}
 """
     print(banner)
 
     if state.update_available:
         print(f"{Back.YELLOW}{Fore.BLACK} ★ NEW YT-DLP RELEASE AVAILABLE: v{state.update_available} {Style.RESET_ALL} {Fore.YELLOW}Type 'u' or 'update' to upgrade!{Style.RESET_ALL}\n")
+
+
+def print_help(topic: Optional[str] = None) -> None:
+    """Display categorized on-demand help tables."""
+    t = (topic or "").strip().lower()
+
+    if not t or t in ("all", "overview"):
+        print(f"""
+{Fore.CYAN}═══ YT-DLP WORKSTATION HELP & COMMAND REFERENCE ═══{Style.RESET_ALL}
+  Type {Fore.YELLOW}help <category>{Style.RESET_ALL} for detailed syntax & examples:
+    {Fore.CYAN}help downloads{Style.RESET_ALL} : Video links, quality shortcuts, custom naming, clips, subs
+    {Fore.CYAN}help audio{Style.RESET_ALL}     : Spotify integration, YouTube Music search, MP3/FLAC
+    {Fore.CYAN}help streaming{Style.RESET_ALL} : Cloud streams (.m3u8), active site referers, fragment merger
+    {Fore.CYAN}help queue{Style.RESET_ALL}     : Queue inspection, cancel (e.g. 'cancel 1', 'cancel all'), workers
+    {Fore.CYAN}help media{Style.RESET_ALL}     : Open folder, play video ('play 1'), reveal in explorer, retry
+    {Fore.CYAN}help settings{Style.RESET_ALL}  : Cookies, SponsorBlock, speed limits, download directory
+
+  {Fore.YELLOW}COMMON QUICK COMMANDS:{Style.RESET_ALL}
+    {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Instant download (auto-detected quality or picker)
+    {Fore.CYAN}1080p / 720p / 4k [URL]{Style.RESET_ALL} : Download directly in specific quality
+    {Fore.CYAN}mp3 / m4a / flac [URL]{Style.RESET_ALL}  : Download as audio track
+    {Fore.CYAN}queue{Style.RESET_ALL}                   : View active and pending downloads
+    {Fore.CYAN}cancel <1..N | all>{Style.RESET_ALL}    : Cancel active or pending downloads
+    {Fore.CYAN}play <1..N | song>{Style.RESET_ALL}     : Play downloaded video OR search music
+    {Fore.CYAN}reveal <1..N>{Style.RESET_ALL}           : Highlight downloaded file in Windows Explorer
+    {Fore.CYAN}retry <1..N>{Style.RESET_ALL}            : Re-enqueue failed download with fresh referer
+    {Fore.CYAN}merge [movie name]{Style.RESET_ALL}      : Stitch & remux orphaned fragments into MP4
+    {Fore.CYAN}cls{Style.RESET_ALL}                     : Clear screen & redraw compact banner
+    {Fore.CYAN}q / quit{Style.RESET_ALL}                : Exit workstation
+""")
+        return
+
+    if t in ("downloads", "download", "video"):
+        print(f"""
+{Fore.CYAN}═══ DOWNLOAD COMMANDS ═══{Style.RESET_ALL}
+  {Fore.CYAN}[URL]{Style.RESET_ALL}                     : Paste URL directly to enqueue
+  {Fore.CYAN}name <title> <URL>{Style.RESET_ALL}        : Download with custom movie/video filename
+  {Fore.CYAN}1080p [URL]{Style.RESET_ALL}               : Full HD 1080p
+  {Fore.CYAN}720p [URL]{Style.RESET_ALL}                : HD 720p
+  {Fore.CYAN}4k [URL]{Style.RESET_ALL}                  : 4K Ultra HD
+  {Fore.CYAN}trim <start>-<end> <URL>{Style.RESET_ALL}   : Download clip (e.g. {Fore.YELLOW}trim 01:15-02:30 URL{Style.RESET_ALL})
+  {Fore.CYAN}items <range> <URL>{Style.RESET_ALL}        : Download playlist items (e.g. {Fore.YELLOW}items 1-5 URL{Style.RESET_ALL})
+  {Fore.CYAN}subs [lang] <URL>{Style.RESET_ALL}          : Embed subtitles (e.g. {Fore.YELLOW}subs en URL{Style.RESET_ALL})
+  {Fore.CYAN}f <URL>{Style.RESET_ALL}                    : Inspect and pick from all exact format codes (-F)
+""")
+    elif t in ("audio", "music", "spotify"):
+        print(f"""
+{Fore.CYAN}═══ AUDIO & MUSIC COMMANDS ═══{Style.RESET_ALL}
+  {Fore.CYAN}spotify <URL>{Style.RESET_ALL}              : Download Spotify track, album, or playlist (320kbps MP3)
+  {Fore.CYAN}play <song title>{Style.RESET_ALL}          : Search YouTube Music & instant download as 320k MP3
+  {Fore.CYAN}mp3 [URL]{Style.RESET_ALL}                 : Extract audio as MP3 (320kbps)
+  {Fore.CYAN}m4a [URL]{Style.RESET_ALL}                 : Extract audio as AAC (.m4a)
+  {Fore.CYAN}flac [URL]{Style.RESET_ALL}                : Extract audio as Lossless FLAC
+""")
+    elif t in ("streaming", "stream", "hls", "m3u8", "cloud"):
+        print(f"""
+{Fore.CYAN}═══ CLOUD STREAMING COMMANDS ═══{Style.RESET_ALL}
+  {Fore.CYAN}ref <site> <m3u8 URL>{Style.RESET_ALL}      : Download cloud stream with explicit referer
+  {Fore.CYAN}site <name/url>{Style.RESET_ALL}            : Set active streaming site (e.g. {Fore.YELLOW}site cinejoy{Style.RESET_ALL} or {Fore.YELLOW}site movy{Style.RESET_ALL})
+  {Fore.CYAN}merge [movie name]{Style.RESET_ALL}         : Stitch & remux orphaned *-Frag* files into an MP4 video
+  {Fore.CYAN}name <title> <URL>{Style.RESET_ALL}         : Set title for generic streams (e.g. index-s1080p-v1-a1.m3u8)
+""")
+    elif t in ("queue", "worker", "workers"):
+        print(f"""
+{Fore.CYAN}═══ QUEUE & WORKER COMMANDS ═══{Style.RESET_ALL}
+  {Fore.CYAN}queue{Style.RESET_ALL} / {Fore.CYAN}qstatus{Style.RESET_ALL}              : View active and pending downloads with 1-based indices
+  {Fore.CYAN}cancel <1..N | id | all>{Style.RESET_ALL}   : Cancel specific job or all active/pending downloads
+  {Fore.CYAN}pause{Style.RESET_ALL}                      : Pause processing pending queue
+  {Fore.CYAN}resume{Style.RESET_ALL}                     : Resume processing pending queue
+  {Fore.CYAN}clearqueue{Style.RESET_ALL}                 : Clear pending queue
+  {Fore.CYAN}workers <1-5>{Style.RESET_ALL}               : Set max concurrent parallel downloads (e.g. {Fore.YELLOW}workers 3{Style.RESET_ALL})
+""")
+    elif t in ("media", "files"):
+        print(f"""
+{Fore.CYAN}═══ MEDIA ACTIONS ═══{Style.RESET_ALL}
+  {Fore.CYAN}play <1..N | id>{Style.RESET_ALL}           : Open completed download in default media player
+  {Fore.CYAN}reveal <1..N | id>{Style.RESET_ALL}         : Highlight downloaded file in Windows File Explorer
+  {Fore.CYAN}retry <1..N | id>{Style.RESET_ALL}          : Re-enqueue failed job from history with fresh referer
+  {Fore.CYAN}open{Style.RESET_ALL}                        : Open the downloads directory in File Explorer
+  {Fore.CYAN}history [clear]{Style.RESET_ALL}             : View download history (or 'history clear' to reset)
+""")
+    elif t in ("settings", "config"):
+        print(f"""
+{Fore.CYAN}═══ SETTINGS & PREFERENCES ═══{Style.RESET_ALL}
+  {Fore.CYAN}settings{Style.RESET_ALL} / {Fore.CYAN}s{Style.RESET_ALL}              : Interactive full settings menu
+  {Fore.CYAN}preset{Style.RESET_ALL} / {Fore.CYAN}p{Style.RESET_ALL}                : Select default quality preset (1-12)
+  {Fore.CYAN}qmode{Style.RESET_ALL}                     : Toggle 'Ask Quality on Each Download'
+  {Fore.CYAN}clip{Style.RESET_ALL} / {Fore.CYAN}c{Style.RESET_ALL}                  : Toggle clipboard auto-monitoring (auto/prompt/off)
+  {Fore.CYAN}sb [on/off]{Style.RESET_ALL}                : Toggle SponsorBlock (auto-skip sponsor segments)
+  {Fore.CYAN}cookies <browser>{Style.RESET_ALL}         : Set browser cookies (chrome, edge, firefox, brave, off)
+  {Fore.CYAN}limit <rate>{Style.RESET_ALL}              : Set speed limit (e.g. {Fore.YELLOW}limit 5M{Style.RESET_ALL} or {Fore.YELLOW}limit off{Style.RESET_ALL})
+  {Fore.CYAN}dir{Style.RESET_ALL}                        : Change download destination folder
+  {Fore.CYAN}update{Style.RESET_ALL} / {Fore.CYAN}u{Style.RESET_ALL}                : Update yt-dlp to the latest version
+""")
+    else:
+        print(f"{Fore.YELLOW}[!] Unknown help topic '{topic}'. Available: downloads, audio, streaming, queue, media, settings.{Style.RESET_ALL}\n")
+
+
+def parse_speed_to_bytes(speed_str: str) -> float:
+    """Parse human readable speed string (e.g. '12.5MiB/s', '800KiB/s') to bytes/sec."""
+    if not speed_str or speed_str in ("--", "N/A"):
+        return 0.0
+    clean = speed_str.lower().replace("/s", "").replace(" ", "").strip()
+    match = re.match(r"^([0-9.]+)([a-z]*)$", clean)
+    if not match:
+        return 0.0
+    try:
+        val, unit = float(match.group(1)), match.group(2)
+    except ValueError:
+        return 0.0
+    if "g" in unit:
+        return val * (1024 ** 3)
+    if "m" in unit:
+        return val * (1024 ** 2)
+    if "k" in unit:
+        return val * 1024
+    return val
+
+
+def format_speed_bytes(bps: float) -> str:
+    """Format bytes per second into human readable string."""
+    if bps >= 1024 ** 3:
+        return f"{bps / (1024 ** 3):.2f} GiB/s"
+    if bps >= 1024 ** 2:
+        return f"{bps / (1024 ** 2):.1f} MiB/s"
+    if bps >= 1024:
+        return f"{bps / 1024:.0f} KiB/s"
+    return f"{bps:.0f} B/s"
+
+
+def format_aggregate_status(active_jobs: list, pending_count: int, is_paused: bool = False) -> str:
+    """Format an aggregate throughput line for multi-worker downloads."""
+    total_bps = sum(parse_speed_to_bytes(getattr(j, "speed_str", "")) for j in active_jobs)
+    speed_text = format_speed_bytes(total_bps) if total_bps > 0 else "--"
+    status_text = "PAUSED" if is_paused else "RUNNING"
+    status_color = Fore.YELLOW if is_paused else Fore.GREEN
+    return (
+        f"{Back.CYAN}{Fore.BLACK} ⚡ MULTI-WORKER {Style.RESET_ALL} "
+        f"{Fore.WHITE}[{len(active_jobs)} Active]{Style.RESET_ALL} "
+        f"Speed: {Fore.GREEN}{speed_text}{Style.RESET_ALL} | "
+        f"Pending: {Fore.YELLOW}{pending_count}{Style.RESET_ALL} | "
+        f"Queue: {status_color}{status_text}{Style.RESET_ALL}"
+    )
 
 
 def _short_title(title: str, limit: int = 22) -> str:

@@ -30,7 +30,7 @@ import time
 import queue
 import threading
 import subprocess
-from typing import Tuple, Optional, Set, List
+from typing import Tuple, Optional, Set, List, Any
 
 try:
     import msvcrt
@@ -118,6 +118,7 @@ def read_line(
     *,
     history: bool = False,
     interruptible: bool = False,
+    queue_mgr: Any = None,
 ) -> Optional[str]:
     """Read one line of input.
 
@@ -130,15 +131,26 @@ def read_line(
     """
     state = resolve_state(state)
     if is_interactive():
-        return _read_line_msvcrt(prompt, state, history, interruptible)
+        return _read_line_msvcrt(prompt, state, history, interruptible, queue_mgr=queue_mgr)
     return _read_line_fallback(prompt, state, history, interruptible)
 
 
-def _read_line_msvcrt(prompt: str, state: AppState, history: bool, interruptible: bool) -> Optional[str]:
+def _read_line_msvcrt(
+    prompt: str,
+    state: AppState,
+    history: bool,
+    interruptible: bool,
+    queue_mgr: Any = None,
+) -> Optional[str]:
+    from .completion import CompletionEngine
+
     CONSOLE.begin_prompt(prompt)
     buf: List[str] = []
+    cursor_pos = 0
     hist_idx = len(COMMAND_HISTORY)
     draft = ""
+    completion_engine = CompletionEngine(state=state, queue_mgr=queue_mgr)
+
     try:
         while not state.stop_requested:
             if not msvcrt.kbhit():
@@ -150,15 +162,18 @@ def _read_line_msvcrt(prompt: str, state: AppState, history: bool, interruptible
 
             ch = msvcrt.getwch()
             if ch in ("\r", "\n"):
+                completion_engine.reset()
                 line = "".join(buf)
                 CONSOLE.end_prompt(commit=True)
                 if history:
                     _remember(line)
                 return line
             if ch == "\x03":  # Ctrl+C
+                completion_engine.reset()
                 if buf:
                     buf.clear()
-                    CONSOLE.set_buffer("")
+                    cursor_pos = 0
+                    CONSOLE.set_buffer("", 0)
                     continue
                 CONSOLE.end_prompt(commit=True)
                 raise KeyboardInterrupt
@@ -166,42 +181,124 @@ def _read_line_msvcrt(prompt: str, state: AppState, history: bool, interruptible
                 CONSOLE.end_prompt(commit=True)
                 raise EOFError
             if ch == "\x1b":  # Esc clears the line
+                completion_engine.reset()
                 buf.clear()
-                CONSOLE.set_buffer("")
+                cursor_pos = 0
+                CONSOLE.set_buffer("", 0)
+                continue
+            if ch == "\x01":  # Ctrl+A: Home
+                completion_engine.reset()
+                cursor_pos = 0
+                CONSOLE.set_buffer("".join(buf), cursor_pos)
+                continue
+            if ch == "\x05":  # Ctrl+E: End
+                completion_engine.reset()
+                cursor_pos = len(buf)
+                CONSOLE.set_buffer("".join(buf), cursor_pos)
+                continue
+            if ch == "\x15":  # Ctrl+U: Delete line to left
+                completion_engine.reset()
+                buf = buf[cursor_pos:]
+                cursor_pos = 0
+                CONSOLE.set_buffer("".join(buf), cursor_pos)
+                continue
+            if ch == "\x0b":  # Ctrl+K: Delete line to right
+                completion_engine.reset()
+                buf = buf[:cursor_pos]
+                CONSOLE.set_buffer("".join(buf), cursor_pos)
                 continue
             if ch == "\x08":  # Backspace
-                if buf:
-                    buf.pop()
-                    CONSOLE.set_buffer("".join(buf))
+                completion_engine.reset()
+                if cursor_pos > 0:
+                    buf.pop(cursor_pos - 1)
+                    cursor_pos -= 1
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
+                continue
+            if ch == "\t":  # Tab completion
+                new_buf, new_cursor, changed = completion_engine.handle_tab(buf, cursor_pos)
+                if changed:
+                    buf = new_buf
+                    cursor_pos = new_cursor
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
                 continue
             if ch in ("\x00", "\xe0"):  # Extended key: second code follows
                 code = msvcrt.getwch()
-                if not history or not COMMAND_HISTORY:
-                    continue
-                if code == "H" and hist_idx > 0:  # Up
-                    if hist_idx == len(COMMAND_HISTORY):
-                        draft = "".join(buf)
-                    hist_idx -= 1
-                    buf = list(COMMAND_HISTORY[hist_idx])
-                    CONSOLE.set_buffer("".join(buf))
-                elif code == "P" and hist_idx < len(COMMAND_HISTORY):  # Down
-                    hist_idx += 1
-                    buf = list(COMMAND_HISTORY[hist_idx]) if hist_idx < len(COMMAND_HISTORY) else list(draft)
-                    CONSOLE.set_buffer("".join(buf))
+                if code == "K":  # Left Arrow
+                    completion_engine.reset()
+                    if cursor_pos > 0:
+                        cursor_pos -= 1
+                        CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "M":  # Right Arrow
+                    completion_engine.reset()
+                    if cursor_pos < len(buf):
+                        cursor_pos += 1
+                        CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "G":  # Home
+                    completion_engine.reset()
+                    cursor_pos = 0
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "O":  # End
+                    completion_engine.reset()
+                    cursor_pos = len(buf)
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "S":  # Delete
+                    completion_engine.reset()
+                    if cursor_pos < len(buf):
+                        buf.pop(cursor_pos)
+                        CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "s":  # Ctrl+Left: Jump word left
+                    completion_engine.reset()
+                    idx = cursor_pos - 1
+                    while idx > 0 and buf[idx] == " ":
+                        idx -= 1
+                    while idx > 0 and buf[idx - 1] != " ":
+                        idx -= 1
+                    cursor_pos = max(0, idx)
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "t":  # Ctrl+Right: Jump word right
+                    completion_engine.reset()
+                    idx = cursor_pos
+                    while idx < len(buf) and buf[idx] != " ":
+                        idx += 1
+                    while idx < len(buf) and buf[idx] == " ":
+                        idx += 1
+                    cursor_pos = min(len(buf), idx)
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "H":  # Up Arrow (History)
+                    completion_engine.reset()
+                    if history and COMMAND_HISTORY and hist_idx > 0:
+                        if hist_idx == len(COMMAND_HISTORY):
+                            draft = "".join(buf)
+                        hist_idx -= 1
+                        buf = list(COMMAND_HISTORY[hist_idx])
+                        cursor_pos = len(buf)
+                        CONSOLE.set_buffer("".join(buf), cursor_pos)
+                elif code == "P":  # Down Arrow (History)
+                    completion_engine.reset()
+                    if history and COMMAND_HISTORY and hist_idx < len(COMMAND_HISTORY):
+                        hist_idx += 1
+                        buf = list(COMMAND_HISTORY[hist_idx]) if hist_idx < len(COMMAND_HISTORY) else list(draft)
+                        cursor_pos = len(buf)
+                        CONSOLE.set_buffer("".join(buf), cursor_pos)
                 continue
             if ch == "\x16":  # Ctrl+V: paste clipboard text
+                completion_engine.reset()
                 try:
                     from ..utils.clipboard import get_clipboard_text
                     text = (get_clipboard_text() or "").replace("\r", " ").replace("\n", " ")
                 except Exception:
                     text = ""
                 if text:
-                    buf.extend(text)
-                    CONSOLE.echo(text)
+                    for c in text:
+                        buf.insert(cursor_pos, c)
+                        cursor_pos += 1
+                    CONSOLE.set_buffer("".join(buf), cursor_pos)
                 continue
             if ord(ch) >= 32:
-                buf.append(ch)
-                CONSOLE.echo(ch)
+                completion_engine.reset()
+                buf.insert(cursor_pos, ch)
+                cursor_pos += 1
+                CONSOLE.set_buffer("".join(buf), cursor_pos)
         return None
     finally:
         if CONSOLE.prompt_active:

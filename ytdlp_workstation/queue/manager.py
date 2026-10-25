@@ -234,24 +234,69 @@ class QueueManager:
             self.is_paused = False
         BUS.publish(EventType.JOB_RESUMED, {})
 
-    def cancel_job(self, job_id: str) -> bool:
-        """Cancel a pending or active job by ID."""
+    def resolve_job(self, target: str) -> Optional[DownloadJob]:
+        """Resolve a job by 1-based index (active followed by pending) or ID."""
+        target = target.strip()
         with self.lock:
+            ordered = list(self.active_jobs.values()) + list(self.pending_queue)
+            if target.isdigit():
+                idx = int(target)
+                if 1 <= idx <= len(ordered):
+                    return ordered[idx - 1]
+            for j in ordered:
+                if j.id == target or j.id.startswith(target):
+                    return j
+        return None
+
+    def cancel_job(self, target: str) -> bool:
+        """Cancel a pending or active job by 1-based index or ID."""
+        target = target.strip()
+        with self.lock:
+            ordered = list(self.active_jobs.values()) + list(self.pending_queue)
+            target_job = None
+            if target.isdigit():
+                idx = int(target)
+                if 1 <= idx <= len(ordered):
+                    target_job = ordered[idx - 1]
+            if not target_job:
+                for j in ordered:
+                    if j.id == target or j.id.startswith(target):
+                        target_job = j
+                        break
+            if not target_job:
+                return False
+
+            if target_job in self.pending_queue:
+                self.pending_queue.remove(target_job)
+                target_job.status = "CANCELLED"
+                self.completed_jobs.append(target_job)
+                BUS.publish(EventType.JOB_CANCELLED, {"job_id": target_job.id, "url": target_job.url})
+                return True
+
+            if target_job.id in self.active_jobs:
+                target_job.is_cancelled.set()
+                target_job.status = "CANCELLING"
+                BUS.publish(EventType.JOB_CANCELLED, {"job_id": target_job.id, "url": target_job.url})
+                return True
+
+        return False
+
+    def cancel_all(self) -> int:
+        """Cancel all pending and active jobs."""
+        with self.lock:
+            count = 0
             for job in list(self.pending_queue):
-                if job.id == job_id:
-                    self.pending_queue.remove(job)
-                    job.status = "CANCELLED"
-                    self.completed_jobs.append(job)
-                    BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
-                    return True
-            # Try to cancel an in-progress job via its cancellation token
-            job = self.active_jobs.get(job_id)
-            if job:
+                self.pending_queue.remove(job)
+                job.status = "CANCELLED"
+                self.completed_jobs.append(job)
+                BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
+                count += 1
+            for job in list(self.active_jobs.values()):
                 job.is_cancelled.set()
                 job.status = "CANCELLING"
                 BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
-                return True
-        return False
+                count += 1
+            return count
 
     def list_jobs(self) -> Dict[str, List[DownloadJob]]:
         """Return snapshot of active, pending, and recent completed jobs."""

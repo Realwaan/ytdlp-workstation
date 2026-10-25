@@ -30,7 +30,7 @@ from ..extractors.spotify import is_spotify_url
 from ..engine.fragment_merger import find_fragment_groups, merge_all_pending_fragments
 from ..utils.system import sanitize_filename
 from .console import CONSOLE
-from .ui import Fore, Style, print_banner, format_job_progress, format_linux_bar
+from .ui import Fore, Style, print_banner, print_help, format_job_progress, format_linux_bar
 from .input_reader import prompt_video_quality, inspect_and_pick_formats, ask_text
 from .commands import (
     cmd_play,
@@ -39,6 +39,8 @@ from .commands import (
     cmd_queue_status,
     cmd_archive_management,
     cmd_codec,
+    cmd_reveal,
+    cmd_retry,
     enqueue_spotify_download,
     enqueue_media_url,
     handle_preset_shortcut,
@@ -130,8 +132,15 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         state.stop_requested = True
         return
 
-    if cmd_lower in ("cls", "clear", "?", "help"):
+    if cmd_lower in ("cls", "clear"):
         print_banner(active_workers=queue_mgr.max_workers, state=state)
+        return
+
+    first_word = raw.split()[0].lower() if " " in raw else raw.lower()
+    arg_part = raw.split(maxsplit=1)[1] if " " in raw else ""
+
+    if first_word in ("?", "help"):
+        print_help(arg_part)
         return
 
     if cmd_lower in ("queue", "qstatus"):
@@ -153,14 +162,19 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         print(f"\n{Fore.GREEN}[✓] Cleared {cnt} pending jobs from queue.{Style.RESET_ALL}\n")
         return
 
-    first_word = raw.split()[0].lower() if " " in raw else raw.lower()
-    arg_part = raw.split(maxsplit=1)[1] if " " in raw else ""
-
-    if first_word == "cancel" and arg_part:
-        if queue_mgr.cancel_job(arg_part.strip()):
-            print(f"\n{Fore.GREEN}[✓] Cancelled job {arg_part.strip()}{Style.RESET_ALL}\n")
+    if first_word == "cancel":
+        target = arg_part.strip()
+        if not target:
+            print(f"\n{Fore.RED}[!] Usage: cancel <1..N | job_id | all>{Style.RESET_ALL}\n")
+            return
+        if target.lower() == "all":
+            cnt = queue_mgr.cancel_all()
+            print(f"\n{Fore.GREEN}[✓] Cancelled all {cnt} active and pending download(s).{Style.RESET_ALL}\n")
+            return
+        if queue_mgr.cancel_job(target):
+            print(f"\n{Fore.GREEN}[✓] Cancelled job {target}{Style.RESET_ALL}\n")
         else:
-            print(f"\n{Fore.RED}[!] Could not find pending job ID: {arg_part.strip()}{Style.RESET_ALL}\n")
+            print(f"\n{Fore.RED}[!] Could not find active or pending job: {target}{Style.RESET_ALL}\n")
         return
 
     if first_word in ("workers", "threads") and arg_part:
@@ -169,8 +183,12 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
             print(f"\n{Fore.GREEN}[✓] Parallel worker concurrency set to: {arg_part}{Style.RESET_ALL}\n")
         return
 
-    if first_word in ("play", "song", "music"):
+    if first_word in ("play", "song", "music", "watch", "view"):
         cmd_play(raw, queue_mgr, state=state)
+    elif first_word == "reveal":
+        cmd_reveal(raw, state=state)
+    elif first_word == "retry":
+        cmd_retry(raw, queue_mgr, state=state)
     elif first_word in ("yt", "search", "find"):
         cmd_search(raw, queue_mgr, state=state)
     elif first_word in ("info", "inspect", "details"):

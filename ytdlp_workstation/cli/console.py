@@ -51,6 +51,7 @@ class Console:
 
         self._prompt: Optional[str] = None
         self._buffer = ""
+        self._cursor_pos: Optional[int] = None
         self._prompt_drawn = False
 
         self._status: "OrderedDict[str, str]" = OrderedDict()
@@ -172,6 +173,7 @@ class Console:
             self._erase_live()
             self._prompt = prompt
             self._buffer = ""
+            self._cursor_pos = 0
             self._draw_live()
             self.flush()
 
@@ -179,16 +181,24 @@ class Console:
         """Append typed characters to the prompt buffer."""
         with self._lock:
             self._buffer += text
+            self._cursor_pos = len(self._buffer)
             if self._prompt_drawn:
                 self.stream.write(text)
                 self.flush()
 
-    def set_buffer(self, text: str) -> None:
-        """Replace the prompt buffer (backspace, history, Esc...)."""
+    def set_buffer(self, text: str, cursor_pos: Optional[int] = None) -> None:
+        """Replace the prompt buffer and cursor position (backspace, arrows, history, Esc...)."""
         with self._lock:
             self._buffer = text
+            if cursor_pos is None:
+                cursor_pos = len(text)
+            self._cursor_pos = max(0, min(len(text), cursor_pos))
             if self._prompt_drawn and self._live:
-                self.stream.write("\r\x1b[K" + (self._prompt or "") + text)
+                line = "\r\x1b[K" + (self._prompt or "") + text
+                if self._cursor_pos < len(text):
+                    diff = len(text) - self._cursor_pos
+                    line += f"\x1b[{diff}D"
+                self.stream.write(line)
                 self.flush()
 
     def end_prompt(self, commit: bool = True) -> None:
@@ -206,11 +216,13 @@ class Console:
                     self.stream.write(self._prompt + self._buffer + "\n")
                 self._prompt = None
                 self._buffer = ""
+                self._cursor_pos = None
                 self._draw_live()
             else:
                 # Cooked terminals already echoed the user's newline.
                 self._prompt = None
                 self._buffer = ""
+                self._cursor_pos = None
                 self._prompt_drawn = False
             self.flush()
 
@@ -274,13 +286,21 @@ class Console:
         out = self.stream
         if self._live and self._status:
             width = max(20, shutil.get_terminal_size((80, 20)).columns - 1)
-            for line in self._status.values():
+            ordered_keys = sorted(
+                self._status.keys(),
+                key=lambda k: 0 if k == "__aggregate__" else 1,
+            )
+            for k in ordered_keys:
+                line = self._status[k]
                 if visible_len(line) > width:
                     line = _ANSI_RE.sub("", line)[: width - 1] + "…"
                 out.write(line + "\x1b[0m\n")
             self._status_drawn = len(self._status)
         if self._prompt is not None:
             out.write(self._prompt + self._buffer)
+            if self._cursor_pos is not None and self._cursor_pos < len(self._buffer):
+                diff = len(self._buffer) - self._cursor_pos
+                out.write(f"\x1b[{diff}D")
             self._prompt_drawn = True
 
 

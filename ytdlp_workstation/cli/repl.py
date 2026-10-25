@@ -114,7 +114,7 @@ def run_repl(queue_mgr: QueueManager, state: Optional[AppState] = None):
             inbox.drain()
             if state.stop_requested:
                 break
-            line = read_line(prompt, state, history=True, interruptible=True)
+            line = read_line(prompt, state, history=True, interruptible=True, queue_mgr=queue_mgr)
             if line is None:
                 continue
             handle_user_command(line, queue_mgr, state=state)

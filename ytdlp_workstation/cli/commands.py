@@ -2,6 +2,7 @@
 Terminal CLI power command handlers and dispatcher.
 """
 
+import os
 import sys
 import json
 import shutil
@@ -131,7 +132,7 @@ def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, ref
 
 
 def cmd_queue_status(queue_mgr):
-    """Display real-time concurrent queue status."""
+    """Display real-time concurrent queue status with 1-based index numbers."""
     info = queue_mgr.list_jobs()
     active = info["active"]
     pending = info["pending"]
@@ -140,33 +141,112 @@ def cmd_queue_status(queue_mgr):
     print(f"\n{Fore.CYAN}═══ 🚀 CONCURRENT DOWNLOAD QUEUE STATUS ═══{Style.RESET_ALL}")
     print(f"Workers: {Fore.GREEN}{len(active)} active / {queue_mgr.max_workers} max parallel{Style.RESET_ALL} | Status: {Fore.YELLOW if queue_mgr.is_paused else Fore.GREEN}{'PAUSED' if queue_mgr.is_paused else 'RUNNING'}{Style.RESET_ALL}")
 
+    current_idx = 1
     if active:
         print(f"\n{Fore.YELLOW}[Active Downloads]{Style.RESET_ALL}")
         for j in active:
             name = j.display_title or j.saved_filename or j.url[:45]
-            print(f"  • {Fore.CYAN}[{j.id}]{Style.RESET_ALL} {Fore.WHITE}{name}{Style.RESET_ALL} - {Fore.GREEN}{j.progress_pct:.1f}%{Style.RESET_ALL} [{j.speed_str}, ETA: {j.eta_str}]")
+            print(f"  {Fore.GREEN}[{current_idx}]{Style.RESET_ALL} {Fore.CYAN}[{j.id[:8]}]{Style.RESET_ALL} {Fore.WHITE}{name}{Style.RESET_ALL} - {Fore.GREEN}{j.progress_pct:.1f}%{Style.RESET_ALL} [{j.speed_str}, ETA: {j.eta_str}]")
+            current_idx += 1
 
     if pending:
         print(f"\n{Fore.LIGHTBLACK_EX}[Pending Tasks ({len(pending)})]{Style.RESET_ALL}")
-        for idx, j in enumerate(pending[:8], 1):
+        for j in pending[:10]:
             name = j.display_title or j.url[:50]
-            print(f"  {idx}. {Fore.LIGHTCYAN_EX}[{j.id}]{Style.RESET_ALL} {name}")
-        if len(pending) > 8:
-            print(f"  ...and {len(pending) - 8} more.")
+            print(f"  {Fore.YELLOW}[{current_idx}]{Style.RESET_ALL} {Fore.LIGHTCYAN_EX}[{j.id[:8]}]{Style.RESET_ALL} {name}")
+            current_idx += 1
+        if len(pending) > 10:
+            print(f"  ...and {len(pending) - 10} more.")
 
     if not active and not pending:
         print(f"{Fore.LIGHTBLACK_EX}Queue is currently empty.{Style.RESET_ALL}")
 
-    print(f"{Fore.LIGHTBLACK_EX}Commands: 'pause', 'resume', 'cancel <id>', 'workers <n>', 'clearqueue'{Style.RESET_ALL}\n")
+    print(f"\n{Fore.LIGHTBLACK_EX}Commands: 'cancel <1..N | id | all>', 'pause', 'resume', 'workers <1-5>', 'clearqueue'{Style.RESET_ALL}\n")
+
+
+def resolve_media_file_by_target(target: str, state: AppState) -> Optional[Path]:
+    """Find a downloaded file by 1-based index (1 = latest) or job ID/name."""
+    target = (target or "1").strip().strip("\"'")
+    download_dir = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+
+    # 1. Check history entries (most recent first)
+    entries = [e for e in state.history_manager.get_entries(limit=50) if e.get("status") == "Success"]
+    matched_entry = None
+    if target.isdigit():
+        idx = int(target)
+        if 1 <= idx <= len(entries):
+            matched_entry = entries[idx - 1]
+    else:
+        for e in entries:
+            eid = str(e.get("id", ""))
+            efn = str(e.get("saved_filename", "") or e.get("title", ""))
+            if target == eid or eid.startswith(target) or target.lower() in efn.lower():
+                matched_entry = e
+                break
+
+    if matched_entry:
+        fn = matched_entry.get("saved_filename") or matched_entry.get("title")
+        if fn:
+            p = download_dir / fn
+            if p.exists():
+                return p
+            p2 = Path(fn)
+            if p2.exists():
+                return p2
+
+    # 2. Fallback to scanning download directory by modification time
+    if download_dir.exists():
+        media_files = sorted(
+            [f for f in download_dir.glob("*.*") if f.suffix.lower() in (".mp4", ".mkv", ".webm", ".mp3", ".m4a", ".flac", ".wav", ".ts")],
+            key=lambda x: x.stat().st_mtime,
+            reverse=True,
+        )
+        if target.isdigit():
+            idx = int(target)
+            if 1 <= idx <= len(media_files):
+                return media_files[idx - 1]
+        elif not target and media_files:
+            return media_files[0]
+        else:
+            for mf in media_files:
+                if target.lower() in mf.name.lower():
+                    return mf
+
+    return None
 
 
 def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
-    """Instant search & download top YouTube Music track as 320kbps MP3."""
+    """Play downloaded media if index/id given; otherwise search YouTube Music."""
     state = _resolve_state(state)
     parts = raw.split(maxsplit=1)
-    if len(parts) > 1:
-        query = parts[1].strip().strip("\"'")
-    else:
+    arg = parts[1].strip().strip("\"'") if len(parts) > 1 else ""
+
+    # If argument is a digit index (e.g. 'play 1') or matches a completed file/ID, open media
+    if arg:
+        media_file = resolve_media_file_by_target(arg, state)
+        if media_file and media_file.exists():
+            print(f"\n{Fore.GREEN}[▶] Launching media player:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
+            try:
+                os.startfile(str(media_file))
+            except Exception as e:
+                print(f"{Fore.RED}[!] Could not launch player: {e}{Style.RESET_ALL}\n")
+            return
+
+    # If it starts with watch or view without song text, try latest file
+    first_word = parts[0].lower()
+    if first_word in ("watch", "view") and not arg:
+        media_file = resolve_media_file_by_target("1", state)
+        if media_file and media_file.exists():
+            print(f"\n{Fore.GREEN}[▶] Launching media player:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
+            try:
+                os.startfile(str(media_file))
+            except Exception as e:
+                print(f"{Fore.RED}[!] Could not launch player: {e}{Style.RESET_ALL}\n")
+            return
+
+    # Otherwise YouTube Music instant search
+    query = arg
+    if not query:
         print(f"\n{Fore.CYAN}═══ 🎵 Instant Music Search ═══{Style.RESET_ALL}")
         query = ask_text(f"{Fore.WHITE}Enter artist or song title >>> {Style.RESET_ALL}", state).strip("\"'")
 
@@ -187,6 +267,75 @@ def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
     )
     queue_mgr.enqueue(job)
     print(f"{Fore.LIGHTBLACK_EX}    Queued top match as 320kbps MP3 with album artwork.{Style.RESET_ALL}\n")
+
+
+def cmd_reveal(raw: str, state: Optional[AppState] = None):
+    """Open Windows File Explorer with the downloaded file selected."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    target = parts[1].strip().strip("\"'") if len(parts) > 1 else "1"
+
+    download_dir = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
+    media_file = resolve_media_file_by_target(target, state)
+
+    if media_file and media_file.exists():
+        print(f"\n{Fore.GREEN}[📂] Revealing in Explorer:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
+        try:
+            subprocess.run(["explorer.exe", f"/select,{str(media_file.resolve())}"])
+        except Exception:
+            os.startfile(str(download_dir))
+    else:
+        print(f"\n{Fore.YELLOW}[!] File not found. Opening downloads folder...{Style.RESET_ALL}\n")
+        download_dir.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(download_dir))
+
+
+def cmd_retry(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Re-enqueue a failed download from history, refreshing streaming referer if needed."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    target = parts[1].strip().strip("\"'") if len(parts) > 1 else "1"
+
+    entries = [e for e in state.history_manager.get_entries(limit=50) if e.get("status") == "Failed"]
+    if not entries:
+        print(f"\n{Fore.YELLOW}[!] No failed downloads found in recent history.{Style.RESET_ALL}\n")
+        return
+
+    matched = None
+    if target.isdigit():
+        idx = int(target)
+        if 1 <= idx <= len(entries):
+            matched = entries[idx - 1]
+    else:
+        for e in entries:
+            eid = str(e.get("id", ""))
+            eurl = str(e.get("url", ""))
+            etit = str(e.get("title", ""))
+            if target == eid or eid.startswith(target) or target in eurl or target in etit:
+                matched = e
+                break
+
+    if not matched:
+        print(f"\n{Fore.RED}[!] Could not find failed job matching '{target}'. (Found {len(entries)} failed tasks in history){Style.RESET_ALL}\n")
+        return
+
+    url = matched.get("url")
+    if not url:
+        print(f"\n{Fore.RED}[!] History entry does not contain a valid URL.{Style.RESET_ALL}\n")
+        return
+
+    fresh_ref = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+    title = matched.get("title")
+
+    new_job = DownloadJob(
+        url=url,
+        referer=fresh_ref,
+        display_title=title,
+    )
+    queue_mgr.enqueue(new_job)
+    print(f"\n{Fore.GREEN}[✓] Re-enqueued failed task #{str(matched.get('id', ''))[:8]}:{Style.RESET_ALL}")
+    print(f"    Title  : {Fore.WHITE}{title or url}{Style.RESET_ALL}")
+    print(f"    Referer: {Fore.GREEN}{fresh_ref}{Style.RESET_ALL}\n")
 
 
 def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):

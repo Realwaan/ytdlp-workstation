@@ -20,7 +20,16 @@ from ..queue.manager import QueueManager
 from ..engine.process_supervisor import SUPERVISOR
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
 from .console import CONSOLE
-from .ui import Fore, Style, print_banner, format_linux_bar, format_job_started, format_job_progress, format_job_result
+from .ui import (
+    Fore,
+    Style,
+    print_banner,
+    format_linux_bar,
+    format_job_started,
+    format_job_progress,
+    format_job_result,
+    format_aggregate_status,
+)
 from .repl import run_repl
 
 
@@ -43,6 +52,15 @@ def main(state: Optional[AppState] = None):
     def _render_progress(job: DownloadJob):
         if CONSOLE.live:
             CONSOLE.set_status(job.id, format_job_progress(job))
+            with queue_mgr.lock:
+                active_list = list(queue_mgr.active_jobs.values())
+                pending_count = len(queue_mgr.pending_queue)
+                is_paused = queue_mgr.is_paused
+            if len(active_list) > 1:
+                agg_line = format_aggregate_status(active_list, pending_count, is_paused)
+                CONSOLE.set_status("__aggregate__", agg_line)
+            else:
+                CONSOLE.clear_status("__aggregate__")
         else:
             bar_text = format_linux_bar(
                 job.display_title or job.saved_filename or job.url,
@@ -59,6 +77,9 @@ def main(state: Optional[AppState] = None):
 
     def _render_finished(job: DownloadJob, success: bool):
         CONSOLE.clear_status(job.id)
+        with queue_mgr.lock:
+            if len(queue_mgr.active_jobs) <= 1:
+                CONSOLE.clear_status("__aggregate__")
         print(format_job_result(job, success))
 
     queue_mgr.on_job_started = _render_started
