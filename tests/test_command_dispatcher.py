@@ -129,3 +129,47 @@ def test_empty_input_noop():
     handle_user_command("", queue_mgr)
     handle_user_command("   ", queue_mgr)
     # Should not crash
+
+
+def test_nowm_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_nowm") as mock_nowm:
+        handle_user_command("nowm https://www.tiktok.com/@user/video/123", queue_mgr)
+        mock_nowm.assert_called_once()
+
+
+def test_sniff_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_sniff") as mock_sniff:
+        handle_user_command("sniff https://example.com/movie", queue_mgr)
+        mock_sniff.assert_called_once()
+
+
+def test_clean_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_clean") as mock_clean:
+        handle_user_command("clean 1 delogo", queue_mgr)
+        mock_clean.assert_called_once()
+
+
+def test_cmd_nowm_direct_resolve_enqueues(capsys):
+    from ytdlp_workstation.cli.commands import cmd_nowm
+    from ytdlp_workstation.extractors.no_watermark import NoWatermarkMedia
+    queue_mgr = MagicMock()
+
+    mock_media = NoWatermarkMedia(
+        direct_url="https://v16-webapp.tiktok.com/play/video.mp4",
+        title="Funny Cat Video",
+        platform="tiktok",
+        referer="https://www.tiktok.com/",
+    )
+
+    with patch("ytdlp_workstation.cli.commands.resolve_no_watermark_media", return_value=mock_media):
+        cmd_nowm("nowm https://www.tiktok.com/@cat/video/123", queue_mgr)
+        queue_mgr.enqueue.assert_called_once()
+        job = queue_mgr.enqueue.call_args[0][0]
+        assert job.url == "https://v16-webapp.tiktok.com/play/video.mp4"
+        assert job.display_title == "Funny Cat Video"
+        captured = capsys.readouterr()
+        assert "unwatermarked stream" in captured.out.lower()
+

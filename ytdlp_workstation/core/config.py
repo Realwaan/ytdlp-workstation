@@ -85,7 +85,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "max_concurrent_downloads": 2,      # Multi-worker parallel downloads (1 to 5)
     "use_download_archive": True,       # Auto-skip already downloaded media in playlists
     "codec_preference": "auto",         # 'auto', 'compatibility' (H.264/AAC), 'quality' (AV1/VP9)
-    "music_engine_provider": "ytm"      # 'ytm' (YouTube Music clean studio) or 'yt' (Standard YouTube)
+    "music_engine_provider": "ytm",     # 'ytm' (YouTube Music clean studio) or 'yt' (Standard YouTube)
+    "prefer_no_watermark": True,        # Prefer clean unwatermarked streams (TikTok, Douyin, CapCut, etc.)
 }
 
 

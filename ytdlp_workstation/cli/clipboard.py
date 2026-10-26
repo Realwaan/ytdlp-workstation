@@ -25,6 +25,7 @@ from ..extractors.referer import (
 )
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url
+from ..extractors.no_watermark import resolve_no_watermark_media
 from ..utils.clipboard import get_clipboard_text
 from ..utils.notifications import play_sound
 from . import inbox
@@ -143,6 +144,17 @@ def clipboard_watcher_thread(queue_mgr: QueueManager, state: Optional[AppState] 
             state.seen_clipboard.add(clean)
 
         play_sound("notice", enabled=state.config.get("sound_effects", True))
+        if state.config.get("prefer_no_watermark", True):
+            try:
+                nowm = resolve_no_watermark_media(url)
+            except Exception:
+                nowm = None
+            if nowm and nowm.direct_url:
+                url = nowm.direct_url
+                if nowm.referer:
+                    state.last_seen_website = nowm.referer
+                print(f"\n{Fore.GREEN}[💧] Auto-detected clean unwatermarked stream for {nowm.platform}!{Style.RESET_ALL}")
+
         auto_ref = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
         if auto_ref:
             print(f"\n{Fore.GREEN}[⚡] Auto-detected Cloud Stream! Attached Referer:{Style.RESET_ALL} {Fore.CYAN}{auto_ref}{Style.RESET_ALL}")

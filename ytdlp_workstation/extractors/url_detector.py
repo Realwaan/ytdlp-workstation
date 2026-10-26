@@ -1,7 +1,13 @@
 """
 Media URL identification, regular expression pattern matching, and cleaning.
-Supports 1,750+ media sites and direct video/audio CDN streams.
+Supports 1,800+ media sites and direct video/audio CDN streams.
 """
+
+from __future__ import annotations
+
+import re
+import urllib.parse
+from typing import Optional
 
 __all__ = [
     "is_valid_media_url",
@@ -13,51 +19,93 @@ __all__ = [
     "GENERIC_URL_REGEX",
 ]
 
-import re
-from typing import Optional
-
 COMMON_MEDIA_DOMAINS = [
+    # Music & Podcasts
     r"(?:open\.)?spotify\.com",
     r"spotify\.link",
-    r"(?:www\.)?youtube\.com",
-    r"youtu\.be",
-    r"(?:www\.)?tiktok\.com",
-    r"(?:www\.)?instagram\.com",
-    r"(?:www\.)?twitter\.com",
-    r"(?:www\.)?x\.com",
-    r"(?:www\.)?reddit\.com",
-    r"(?:www\.)?twitch\.tv",
-    r"(?:www\.)?facebook\.com",
-    r"fb\.watch",
-    r"(?:www\.)?bilibili\.com",
-    r"(?:www\.)?vimeo\.com",
     r"(?:www\.)?soundcloud\.com",
-    r"(?:www\.)?dailymotion\.com",
-    r"(?:www\.)?pinterest\.com",
-    r"pin\.it",
-    r"(?:www\.)?threads\.net",
-    r"(?:www\.)?rumble\.com",
-    r"(?:www\.)?streamable\.com",
-    r"(?:www\.)?kick\.com",
-    r"(?:www\.)?loom\.com",
-    r"(?:www\.)?vk\.com",
-    r"(?:www\.)?ok\.ru",
     r"(?:www\.)?bandcamp\.com",
     r"(?:www\.)?mixcloud\.com",
-    r"(?:www\.)?crunchyroll\.com",
+    
+    # Major Video Platforms
+    r"(?:www\.)?youtube\.com",
+    r"youtu\.be",
+    r"(?:www\.)?vimeo\.com",
+    r"(?:www\.)?dailymotion\.com",
+    r"dai\.ly",
+    r"(?:www\.)?bilibili\.com",
+    r"b23\.tv",
+    r"(?:www\.)?twitch\.tv",
+    r"(?:www\.)?kick\.com",
+    r"(?:www\.)?rumble\.com",
+    r"(?:www\.)?streamable\.com",
+    r"(?:www\.)?loom\.com",
     r"(?:www\.)?odysee\.com",
     r"(?:www\.)?bitchute\.com",
-    r"(?:www\.)?archive\.org",
-    r"(?:www\.)?snapchat\.com",
-    r"(?:www\.)?tumblr\.com",
+    r"(?:www\.)?crunchyroll\.com",
     r"(?:www\.)?ted\.com",
+    r"(?:www\.)?archive\.org",
+    
+    # Social & Short-Form Video (TikTok, Douyin, CapCut, Kuaishou, Xiaohongshu)
+    r"(?:www\.)?tiktok\.com",
+    r"vt\.tiktok\.com",
+    r"vm\.tiktok\.com",
+    r"(?:www\.)?douyin\.com",
+    r"v\.douyin\.com",
+    r"iesdouyin\.com",
+    r"(?:www\.)?capcut\.com",
+    r"(?:www\.)?kuaishou\.com",
+    r"kwai\.com",
+    r"(?:www\.)?xiaohongshu\.com",
+    r"xhslink\.com",
+    r"(?:www\.)?instagram\.com",
+    r"(?:www\.)?threads\.net",
+    r"(?:www\.)?snapchat\.com",
+    r"(?:www\.)?pinterest\.com",
+    r"pin\.it",
+    r"(?:www\.)?twitter\.com",
+    r"(?:www\.)?x\.com",
+    r"t\.co",
+    r"(?:www\.)?reddit\.com",
+    r"v\.redd\.it",
+    r"(?:www\.)?facebook\.com",
+    r"fb\.watch",
+    r"(?:www\.)?weibo\.com",
+    r"weibo\.cn",
     r"(?:www\.)?linkedin\.com",
+    r"(?:www\.)?tumblr\.com",
+    r"(?:www\.)?vk\.com",
+    r"(?:www\.)?ok\.ru",
     r"(?:www\.)?imgur\.com",
-    r"(?:www\.)?giphy\.com"
+    r"(?:www\.)?giphy\.com",
+    r"(?:www\.)?redgifs\.com",
+    
+    # Streaming hosts & cloud embeds
+    r"(?:www\.)?streamtape\.com",
+    r"doodstream\.com",
+    r"dood\.to",
+    r"dood\.watch",
+    r"dood\.so",
+    r"filemoon\.sx",
+    r"filemoon\.to",
+    r"voe\.sx",
+    r"voe-network\.net",
+    r"mixdrop\.co",
+    r"mixdrop\.to",
+    r"mp4upload\.com",
+    r"vidhide\.com",
+    r"vidhidepro\.com",
+    r"streamsb\.net",
+    r"sbembed\.com",
+    r"watchsb\.com",
+    r"streamwish\.to",
+    r"streamwish\.com",
+    r"vidmoly\.me",
+    r"upstream\.to",
 ]
 
 MEDIA_REGEX = re.compile(
-    r"https?://(?:[a-zA-Z0-9_\-]+\.)*(?:" + "|".join(COMMON_MEDIA_DOMAINS) + r")/[^\s]+",
+    r"https?://(?:[a-zA-Z0-9_\-]+\.)*(?:" + "|".join(COMMON_MEDIA_DOMAINS) + r")(?::[0-9]+)?(?:/[^\s]*)?",
     re.IGNORECASE
 )
 
@@ -100,10 +148,27 @@ def extract_media_url(text: str) -> Optional[str]:
 
 
 def clean_url(url: str) -> str:
-    """Strip marketing tracking parameters (utm_*, si, feature) from URLs."""
-    if not url:
+    """Strip marketing tracking parameters (utm_*, si, feature, fbclid, etc.) from URLs."""
+    if not url or not isinstance(url, str):
         return ""
     url = url.strip()
-    url = re.sub(r'([?&])(utm_[^&=]+|si|feature)=[^&#]*', '', url)
-    url = url.rstrip('?&')
-    return url
+    try:
+        parts = urllib.parse.urlsplit(url)
+        if not parts.query:
+            return url
+        # Strip tracking parameters while keeping critical video IDs, auth tokens, and stream formats
+        drop_exact = {
+            "si", "feature", "fbclid", "gclid", "igshid",
+            "share_token", "share_app_name", "share_id", "ref_src", "ref_url",
+        }
+        filtered_q = []
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True):
+            k_lower = k.lower()
+            if k_lower.startswith("utm_") or k_lower in drop_exact:
+                continue
+            filtered_q.append((k, v))
+        new_query = urllib.parse.urlencode(filtered_q)
+        return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    except Exception:
+        return url
+

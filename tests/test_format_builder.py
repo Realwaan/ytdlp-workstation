@@ -103,3 +103,18 @@ def test_generic_stream_with_detected_movie_title(tmp_path):
     assert Path(opts["outtmpl"]["default"]).name == "The Odyssey (2026) [2160p].%(ext)s"
 
 
+def test_no_watermark_opts_injection(tmp_path):
+    job = DownloadJob(url="https://www.tiktok.com/@user/video/123456789")
+    config = {"download_dir": str(tmp_path), "preset": 2}
+    opts, _ = build_native_ytdlp_opts(job, config)
+    assert "format_note!*=watermarked" in opts["format"]
+    assert "extractor_args" in opts
+    assert "tiktok" in opts["extractor_args"]
+
+    cmd, _ = build_subprocess_command(job, config)
+    cmd_str = " ".join(cmd)
+    assert "format_note!*=watermarked" in cmd_str
+    assert "--extractor-args" in cmd_str
+
+
+

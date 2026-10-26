@@ -16,6 +16,7 @@ __all__ = [
 ]
 
 import hashlib
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
@@ -25,6 +26,26 @@ from ..core.state import DownloadJob
 from ..extractors.referer import auto_detect_referer
 from ..extractors.title_detector import detect_stream_title, extract_resolution_tag
 from ..utils.system import sanitize_filename
+
+
+def _inject_no_watermark_filter(format_str: str) -> str:
+    """Inject format_note!*=watermarked filter to prefer unwatermarked streams."""
+    if not format_str or "[format_note" in format_str:
+        return format_str
+    parts = format_str.split("/")
+    filtered_parts = []
+    for part in parts:
+        if "+" in part:
+            v_part, a_part = part.split("+", 1)
+            filtered_parts.append(f"{v_part}[format_note!*=watermarked]+{a_part}")
+        elif part.startswith(("b", "best", "bv")):
+            filtered_parts.append(f"{part}[format_note!*=watermarked]")
+        else:
+            filtered_parts.append(part)
+    combined = "/".join(filtered_parts)
+    if combined != format_str:
+        return f"{combined}/{format_str}"
+    return format_str
 
 
 def _is_generic_stream_url(url: str, referer: Optional[str] = None) -> bool:
@@ -197,13 +218,28 @@ def _build_common_options(
             opts["postprocessors"].append({"key": "FFmpegMetadata", "add_metadata": True})
             opts["postprocessors"].append({"key": "EmbedThumbnail"})
         else:
-            opts["format"] = preset["format"]
+            raw_fmt = preset["format"]
+            if config.get("prefer_no_watermark", True):
+                raw_fmt = _inject_no_watermark_filter(raw_fmt)
+            opts["format"] = raw_fmt
             if preset["merge_format"]:
                 opts["merge_output_format"] = preset["merge_format"]
             opts["postprocessors"].append({"key": "FFmpegMetadata", "add_metadata": True})
             opts["postprocessors"].append({"key": "EmbedThumbnail"})
             if preset.get("extra_args"):
                 opts["_extra_args"] = list(preset["extra_args"])
+
+    # No-watermark extractor configuration for social platforms
+    if config.get("prefer_no_watermark", True):
+        opts["extractor_args"] = {
+            "tiktok": {
+                "api_hostname": ["api16-normal-c-useast1a.tiktokv.com"],
+                "app_info": ["musical_ly"],
+            },
+            "douyin": {
+                "app_info": ["aweme"],
+            }
+        }
 
     # Browser cookies
     cookies = config.get("browser_cookies", "none")
@@ -342,6 +378,12 @@ def build_subprocess_command(
     if opts.get("format_sort"):
         cmd.extend(["--format-sort", ",".join(opts["format_sort"])])
 
+    if config.get("prefer_no_watermark", True):
+        cmd.extend([
+            "--extractor-args", "tiktok:api_hostname=api16-normal-c-useast1a.tiktokv.com;app_info=musical_ly",
+            "--extractor-args", "douyin:app_info=aweme",
+        ])
+
     if opts.get("cookiesfrombrowser"):
         cmd.extend(["--cookies-from-browser", str(opts["cookiesfrombrowser"][0])])
 
@@ -387,8 +429,9 @@ def build_subprocess_command(
         if preset.get("extract_audio"):
             cmd.extend(["-x", "--audio-format", preset.get("audio_format", "mp3")])
         else:
-            if preset.get("format"):
-                cmd.extend(["-f", preset["format"]])
+            fmt_str = opts.get("format", preset.get("format"))
+            if fmt_str:
+                cmd.extend(["-f", fmt_str])
             if preset.get("merge_format"):
                 cmd.extend(["--merge-output-format", preset["merge_format"]])
         if extra_args:

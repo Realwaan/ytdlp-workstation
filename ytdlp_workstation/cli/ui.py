@@ -106,10 +106,14 @@ def print_help(topic: Optional[str] = None) -> None:
     {Fore.CYAN}help streaming{Style.RESET_ALL} : Cloud streams (.m3u8), active site referers, fragment merger
     {Fore.CYAN}help queue{Style.RESET_ALL}     : Queue inspection, cancel (e.g. 'cancel 1', 'cancel all'), workers
     {Fore.CYAN}help media{Style.RESET_ALL}     : Open folder, play video ('play 1'), reveal in explorer, retry
+    {Fore.CYAN}help watermark{Style.RESET_ALL} : Clean no-watermark downloads (TikTok, Douyin, CapCut), web sniffer, delogo
     {Fore.CYAN}help settings{Style.RESET_ALL}  : Cookies, SponsorBlock, speed limits, download directory
 
   {Fore.YELLOW}COMMON QUICK COMMANDS:{Style.RESET_ALL}
     {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Instant download (auto-detected quality or picker)
+    {Fore.CYAN}nowm [URL]{Style.RESET_ALL}              : Download clean unwatermarked video directly
+    {Fore.CYAN}sniff [URL]{Style.RESET_ALL}             : Sniff webpage for hidden embedded video streams
+    {Fore.CYAN}clean <1..N | file>{Style.RESET_ALL}     : Remove corner watermark (delogo) or crop banner
     {Fore.CYAN}1080p / 720p / 4k [URL]{Style.RESET_ALL} : Download directly in specific quality
     {Fore.CYAN}mp3 / m4a / flac [URL]{Style.RESET_ALL}  : Download as audio track
     {Fore.CYAN}queue{Style.RESET_ALL}                   : View active and pending downloads
@@ -171,6 +175,15 @@ def print_help(topic: Optional[str] = None) -> None:
   {Fore.CYAN}retry <1..N | id>{Style.RESET_ALL}          : Re-enqueue failed job from history with fresh referer
   {Fore.CYAN}open{Style.RESET_ALL}                        : Open the downloads directory in File Explorer
   {Fore.CYAN}history [clear]{Style.RESET_ALL}             : View download history (or 'history clear' to reset)
+""")
+    elif t in ("watermark", "nowm", "clean", "sniff", "delogo"):
+        print(f"""
+{Fore.CYAN}═══ CLEAN & NO-WATERMARK VIDEO EXTRACTION ═══{Style.RESET_ALL}
+  {Fore.CYAN}nowm <URL>{Style.RESET_ALL}               : Extract unwatermarked stream (TikTok, Douyin, CapCut, etc.)
+  {Fore.CYAN}sniff <URL>{Style.RESET_ALL}              : Sniff arbitrary webpage for hidden .m3u8, .mpd, or .mp4 streams
+  {Fore.CYAN}clean <1..N | file>{Style.RESET_ALL}      : Interactively apply delogo or crop to a downloaded video
+  {Fore.CYAN}clean <1..N> delogo{Style.RESET_ALL}      : Interpolate/blur corner watermark logo via FFmpeg
+  {Fore.CYAN}clean <1..N> crop{Style.RESET_ALL}        : Crop away bottom watermark banner strip (e.g. 60px)
 """)
     elif t in ("settings", "config"):
         print(f"""

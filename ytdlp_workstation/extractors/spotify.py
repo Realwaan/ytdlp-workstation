@@ -17,7 +17,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from ..core.config import BASE_DIR
+from ..core.config import BASE_DIR, FFMPEG_EXE
 
 
 def is_spotify_url(url: str) -> bool:
@@ -160,7 +160,7 @@ def embed_cover_art_ffmpeg(media_path: Path, image_url: str) -> bool:
 
         if temp_img.exists() and temp_img.stat().st_size > 1000:
             temp_out = media_path.parent / f".tmp_{media_path.name}"
-            ffmpeg_bin = str(BASE_DIR / "ffmpeg.exe") if (BASE_DIR / "ffmpeg.exe").exists() else "ffmpeg"
+            ffmpeg_bin = str(FFMPEG_EXE) if FFMPEG_EXE.exists() else "ffmpeg"
             cmd = [
                 ffmpeg_bin, "-y",
                 "-i", str(media_path),

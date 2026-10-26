@@ -61,6 +61,11 @@ TOP_LEVEL_COMMANDS: List[str] = [
     "name",
     "title",
     "merge",
+    "nowm",
+    "sniff",
+    "clean",
+    "delogo",
+    "crop",
     # Quality shortcuts
     "1080p",
     "720p",
@@ -78,10 +83,11 @@ TOP_LEVEL_COMMANDS: List[str] = [
 
 # Static subcommand completions
 SUBCOMMAND_MAP: Dict[str, List[str]] = {
-    "help": ["downloads", "audio", "streaming", "settings", "queue"],
+    "help": ["downloads", "audio", "streaming", "settings", "queue", "watermark"],
     "history": ["clear"],
     "archive": ["clear", "check"],
     "codec": ["auto", "avc", "hevc", "av01", "vp9"],
+    "clean": ["delogo", "crop"],
     "sb": ["on", "off"],
     "cookies": ["chrome", "edge", "firefox", "brave", "off"],
     "cancel": ["all"],

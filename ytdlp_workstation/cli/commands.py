@@ -17,6 +17,9 @@ from ..extractors.url_detector import is_valid_media_url, extract_media_url, GEN
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
+from ..extractors.no_watermark import resolve_no_watermark_media
+from ..extractors.web_sniffer import sniff_web_media
+from ..engine.watermark_remover import clean_video
 from ..utils.system import sanitize_filename
 from .ui import Fore, Style, print_banner
 from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats, ask_text
@@ -109,17 +112,31 @@ def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, ref
     Must run on the main thread (it may prompt). Returns True if queued.
     """
     state = _resolve_state(state)
+    target_url = url
+    if state.config.get("prefer_no_watermark", True) and "custom_format_str" not in job_kwargs:
+        try:
+            detected_nowm = resolve_no_watermark_media(url)
+        except Exception:
+            detected_nowm = None
+        if detected_nowm and detected_nowm.direct_url:
+            target_url = detected_nowm.direct_url
+            if detected_nowm.referer:
+                referer = detected_nowm.referer
+            if not job_kwargs.get("display_title") and detected_nowm.title:
+                job_kwargs["display_title"] = detected_nowm.title
+            print(f"{Fore.GREEN}[💧] Auto-detected clean unwatermarked stream for {detected_nowm.platform}!{Style.RESET_ALL}")
+
     if referer is None:
-        referer = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
-    job = DownloadJob(url=url, referer=referer, **job_kwargs)
-    if not job.display_title and (referer or ".m3u8" in url.lower() or "/vd/" in url.lower()):
-        detected = detect_stream_title(url, last_seen_website=state.last_seen_website)
+        referer = auto_detect_referer(target_url, last_seen_website=state.last_seen_website, default_referer=state.config.get("default_stream_referer", "https://movy.sx/"))
+    job = DownloadJob(url=target_url, referer=referer, **job_kwargs)
+    if not job.display_title and (referer or ".m3u8" in target_url.lower() or "/vd/" in target_url.lower()):
+        detected = detect_stream_title(target_url, last_seen_website=state.last_seen_website)
         if detected:
             job.display_title = detected
             print(f"{Fore.GREEN}[🎬] Auto-detected Movie Title:{Style.RESET_ALL} {Fore.LIGHTGREEN_EX}{detected}{Style.RESET_ALL}")
     wants_prompt = state.config.get("ask_quality_each_time", True)
     if wants_prompt and job.preset_override is None and not job.custom_format_str:
-        preset_id, custom_fmt = prompt_video_quality(url, referer=referer, state=state, job=job)
+        preset_id, custom_fmt = prompt_video_quality(target_url, referer=referer, state=state, job=job)
         if preset_id is None and custom_fmt is None:
             return False
         job.preset_override = preset_id
@@ -127,7 +144,7 @@ def enqueue_media_url(url: str, queue_mgr, state: Optional[AppState] = None, ref
     queue_mgr.enqueue(job)
     title_note = f"{Fore.LIGHTGREEN_EX}{job.display_title}{Style.RESET_ALL} — " if job.display_title else ""
     ref_note = f" {Fore.LIGHTBLACK_EX}(referer: {referer}){Style.RESET_ALL}" if referer else ""
-    print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{url}{ref_note}\n")
+    print(f"{Fore.GREEN}[+] Queued{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {title_note}{target_url}{ref_note}\n")
     return True
 
 
@@ -585,3 +602,135 @@ def handle_preset_shortcut(keyword: str, arg: str, queue_mgr, state: Optional[Ap
     queue_mgr.enqueue(job)
     print(f"{Fore.GREEN}[+] Queued in {label}:{Style.RESET_ALL} {url}")
     return True
+
+
+def cmd_nowm(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Download clean unwatermarked video from TikTok, Douyin, CapCut, or sniff arbitrary web page."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        url_in = parts[1].strip().strip("\"'")
+    else:
+        print(f"\n{Fore.CYAN}═══ 💧 Clean / No-Watermark Downloader ═══{Style.RESET_ALL}")
+        url_in = ask_text(f"{Fore.WHITE}Paste video or page URL >>> {Style.RESET_ALL}", state).strip("\"'")
+
+    if not url_in:
+        return
+
+    url = extract_media_url(url_in) or url_in
+    print(f"\n{Fore.CYAN}[🔍] Resolving unwatermarked media stream for:{Style.RESET_ALL} {Fore.WHITE}{url}{Style.RESET_ALL}")
+
+    media = resolve_no_watermark_media(url)
+    if media and media.direct_url:
+        print(f"{Fore.GREEN}[✓] Successfully extracted unwatermarked stream! ({media.platform}){Style.RESET_ALL}")
+        if media.title:
+            print(f"    {Fore.WHITE}Title: {Fore.LIGHTGREEN_EX}{media.title}{Style.RESET_ALL}")
+        job = DownloadJob(
+            url=media.direct_url,
+            referer=media.referer or url,
+            display_title=media.title,
+        )
+        queue_mgr.enqueue(job)
+        print(f"{Fore.GREEN}[+] Queued clean direct stream:{Style.RESET_ALL} {media.direct_url[:80]}...\n")
+        return
+
+    # Fallback to web sniffer
+    print(f"{Fore.YELLOW}[*] Direct mobile unwatermarker returned no match. Sniffing web player...{Style.RESET_ALL}")
+    streams = sniff_web_media(url)
+    if streams:
+        print(f"{Fore.GREEN}[✓] Found {len(streams)} embedded stream(s) on page!{Style.RESET_ALL}")
+        for idx, s in enumerate(streams[:5], 1):
+            print(f"  [{idx}] {s.stream_type.upper()}: {s.url[:70]}...")
+        top_stream = streams[0]
+        job = DownloadJob(
+            url=top_stream.url,
+            referer=top_stream.referer or url,
+            display_title=top_stream.title,
+        )
+        queue_mgr.enqueue(job)
+        print(f"{Fore.GREEN}[+] Queued best sniffed stream!{Style.RESET_ALL}\n")
+        return
+
+    # Standard enqueue with prefer_no_watermark format injection
+    print(f"{Fore.LIGHTCYAN_EX}[*] Queuing URL with active yt-dlp unwatermarked format selectors...{Style.RESET_ALL}")
+    enqueue_media_url(url, queue_mgr, state=state)
+
+
+def cmd_sniff(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Sniff arbitrary web pages for hidden video streams (.m3u8, .mpd, .mp4)."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        url_in = parts[1].strip().strip("\"'")
+    else:
+        print(f"\n{Fore.CYAN}═══ 🌐 Universal Web Video Sniffer ═══{Style.RESET_ALL}")
+        url_in = ask_text(f"{Fore.WHITE}Enter webpage URL to sniff >>> {Style.RESET_ALL}", state).strip("\"'")
+
+    if not url_in:
+        return
+
+    url = extract_media_url(url_in) or url_in
+    print(f"\n{Fore.CYAN}[🔎] Sniffing webpage for embedded media streams...{Style.RESET_ALL}")
+    streams = sniff_web_media(url)
+    if not streams:
+        print(f"{Fore.RED}[!] No video streams or player configs found on page.{Style.RESET_ALL}\n")
+        return
+
+    print(f"\n{Fore.GREEN}═══ 🎬 FOUND {len(streams)} STREAM(S) ═══{Style.RESET_ALL}")
+    valid_keys = {"s"}
+    for idx, s in enumerate(streams[:8], 1):
+        valid_keys.add(str(idx))
+        tit = s.title or "Embedded Video"
+        print(f"  {Fore.LIGHTGREEN_EX}[{idx}]{Style.RESET_ALL} {Fore.WHITE}{tit[:60]}{Style.RESET_ALL}")
+        print(f"      {Fore.CYAN}{s.stream_type.upper()}{Style.RESET_ALL} | {Fore.LIGHTBLACK_EX}{s.url[:70]}...{Style.RESET_ALL}")
+
+    print(f"\n  {Fore.YELLOW}[s] Skip / Cancel{Style.RESET_ALL}\n")
+    choice = read_single_choice(valid_keys, default_val="1", state=state, prompt=f"{Fore.WHITE}Select stream to download: {Style.RESET_ALL}")
+    if choice == "s":
+        print(f"{Fore.LIGHTBLACK_EX}[!] Sniffer cancelled.{Style.RESET_ALL}\n")
+        return
+
+    chosen = streams[int(choice) - 1]
+    job = DownloadJob(
+        url=chosen.url,
+        referer=chosen.referer or url,
+        display_title=chosen.title,
+    )
+    queue_mgr.enqueue(job)
+    print(f"\n{Fore.GREEN}[+] Queued sniffed stream:{Style.RESET_ALL} {chosen.url}\n")
+
+
+def cmd_clean(raw: str, state: Optional[AppState] = None):
+    """Remove burned-in watermark or crop bottom watermark bar from a video file."""
+    state = _resolve_state(state)
+    parts = raw.split()
+    target = parts[1].strip("\"'") if len(parts) > 1 else "1"
+    mode = parts[2].lower() if len(parts) > 2 else ""
+
+    media_file = resolve_media_file_by_target(target, state)
+    if not media_file or not media_file.exists():
+        if Path(target).exists():
+            media_file = Path(target)
+        else:
+            print(f"\n{Fore.RED}[!] Could not find target video: {target}{Style.RESET_ALL}\n")
+            return
+
+    if not mode:
+        print(f"\n{Fore.CYAN}═══ 🧼 Video Watermark Cleanup ═══{Style.RESET_ALL}")
+        print(f"File: {Fore.GREEN}{media_file.name}{Style.RESET_ALL}")
+        print("  [1] Delogo (blur/interpolate corner watermark logo)")
+        print("  [2] Crop (crop away bottom watermark banner, e.g. 60px)")
+        choice = read_single_choice({"1", "2", "s"}, default_val="1", state=state, prompt=f"{Fore.WHITE}Choose mode: {Style.RESET_ALL}")
+        if choice == "s":
+            return
+        mode = "delogo" if choice == "1" else "crop"
+
+    print(f"\n{Fore.CYAN}[⚡] Processing video with FFmpeg ({mode})...{Style.RESET_ALL}")
+    out = clean_video(media_file, mode=mode)
+    if out and out.exists():
+        sz_mb = out.stat().st_size / (1024 * 1024)
+        print(f"{Fore.GREEN}[✓] Watermark cleanup completed!{Style.RESET_ALL}")
+        print(f"    Saved: {Fore.LIGHTGREEN_EX}{out.name}{Style.RESET_ALL} ({sz_mb:.1f} MB)\n")
+    else:
+        print(f"{Fore.RED}[!] Cleanup failed. Check that FFmpeg is available and file is not locked.{Style.RESET_ALL}\n")
+
