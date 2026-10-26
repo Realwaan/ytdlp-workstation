@@ -17,7 +17,9 @@ from typing import Optional
 from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, CONFIG_FILE, YTDLP_EXE
 from ..queue.manager import QueueManager
+from ..queue.subscription_scheduler import SubscriptionScheduler
 from ..engine.process_supervisor import SUPERVISOR
+from ..core.webhooks import WEBHOOK_DISPATCHER
 from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment, set_console_title
 from .console import CONSOLE
 from .ui import (
@@ -85,11 +87,23 @@ def main(state: Optional[AppState] = None):
     queue_mgr.on_job_progress = _render_progress
     queue_mgr.on_job_finished = _render_finished
 
+    WEBHOOK_DISPATCHER.install()
+    sub_scheduler = SubscriptionScheduler(queue_mgr, state=state)
+    sub_scheduler.start()
+
     try:
         run_repl(queue_mgr, state=state)
     finally:
+        sub_scheduler.stop()
+        WEBHOOK_DISPATCHER.uninstall()
         state.stop_requested = True
         queue_mgr.stop_requested = True
+        # Stop background web telemetry server if active
+        from ..web.server import get_dashboard_server
+        web_srv = get_dashboard_server()
+        if web_srv:
+            web_srv.stop()
+
         # Reap all supervised subprocesses (yt-dlp, ffmpeg, aria2c) to avoid
         # orphaned processes holding file locks on Windows.
         SUPERVISOR.reap_all()

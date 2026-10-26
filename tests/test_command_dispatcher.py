@@ -173,3 +173,47 @@ def test_cmd_nowm_direct_resolve_enqueues(capsys):
         captured = capsys.readouterr()
         assert "unwatermarked stream" in captured.out.lower()
 
+
+def test_sub_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_sub") as mock_sub:
+        handle_user_command("sub list", queue_mgr)
+        mock_sub.assert_called_once()
+
+
+def test_webhook_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_webhook") as mock_hook:
+        handle_user_command("webhook list", queue_mgr)
+        mock_hook.assert_called_once()
+
+
+def test_batch_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_batch") as mock_batch:
+        handle_user_command("batch urls.txt", queue_mgr)
+        mock_batch.assert_called_once()
+
+
+def test_norm_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_norm") as mock_norm:
+        handle_user_command("norm on", queue_mgr)
+        mock_norm.assert_called_once()
+
+
+def test_lyrics_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_lyrics") as mock_lyrics:
+        handle_user_command("lyrics Queen - Bohemian Rhapsody", queue_mgr)
+        mock_lyrics.assert_called_once()
+
+
+def test_dashboard_command_dispatches():
+    queue_mgr = MagicMock()
+    with patch("ytdlp_workstation.cli.command_dispatcher.cmd_dashboard") as mock_dashboard:
+        handle_user_command("dashboard", queue_mgr)
+        mock_dashboard.assert_called_once()
+
+
+

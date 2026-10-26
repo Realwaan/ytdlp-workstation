@@ -217,6 +217,9 @@ def _build_common_options(
             })
             opts["postprocessors"].append({"key": "FFmpegMetadata", "add_metadata": True})
             opts["postprocessors"].append({"key": "EmbedThumbnail"})
+            if config.get("audio_loudness_norm", False):
+                opts.setdefault("postprocessor_args", {})
+                opts["postprocessor_args"]["ExtractAudio"] = ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11"]
         else:
             raw_fmt = preset["format"]
             if config.get("prefer_no_watermark", True):
@@ -428,6 +431,8 @@ def build_subprocess_command(
 
         if preset.get("extract_audio"):
             cmd.extend(["-x", "--audio-format", preset.get("audio_format", "mp3")])
+            if config.get("audio_loudness_norm", False):
+                cmd.extend(["--postprocessor-args", "ExtractAudio:-af loudnorm=I=-16:TP=-1.5:LRA=11"])
         else:
             fmt_str = opts.get("format", preset.get("format"))
             if fmt_str:

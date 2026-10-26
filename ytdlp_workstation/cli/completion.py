@@ -66,6 +66,14 @@ TOP_LEVEL_COMMANDS: List[str] = [
     "clean",
     "delogo",
     "crop",
+    "sub",
+    "webhook",
+    "batch",
+    "norm",
+    "lyrics",
+    "lrc",
+    "dashboard",
+    "web",
     # Quality shortcuts
     "1080p",
     "720p",
@@ -83,11 +91,16 @@ TOP_LEVEL_COMMANDS: List[str] = [
 
 # Static subcommand completions
 SUBCOMMAND_MAP: Dict[str, List[str]] = {
-    "help": ["downloads", "audio", "streaming", "settings", "queue", "watermark"],
+    "help": ["downloads", "audio", "streaming", "settings", "queue", "watermark", "automation"],
     "history": ["clear"],
     "archive": ["clear", "check"],
     "codec": ["auto", "avc", "hevc", "av01", "vp9"],
     "clean": ["delogo", "crop"],
+    "sub": ["list", "add", "remove", "toggle", "check"],
+    "webhook": ["list", "add", "remove", "test"],
+    "norm": ["on", "off", "toggle"],
+    "lyrics": ["on", "off", "toggle"],
+    "lrc": ["on", "off", "toggle"],
     "sb": ["on", "off"],
     "cookies": ["chrome", "edge", "firefox", "brave", "off"],
     "cancel": ["all"],

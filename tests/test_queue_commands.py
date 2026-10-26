@@ -8,6 +8,7 @@ from ytdlp_workstation.cli.command_dispatcher import handle_user_command
 def test_resolve_job_by_index_and_id():
     state = AppState()
     qm = QueueManager(max_workers=2, state=state)
+    qm.is_paused = True
     j1 = DownloadJob(url="https://test.com/1")
     j2 = DownloadJob(url="https://test.com/2")
     qm.active_jobs[j1.id] = j1
@@ -29,6 +30,7 @@ def test_resolve_job_by_index_and_id():
 def test_cancel_job_by_index():
     state = AppState()
     qm = QueueManager(max_workers=2, state=state)
+    qm.is_paused = True
     j1 = DownloadJob(url="https://test.com/1")
     j2 = DownloadJob(url="https://test.com/2")
     qm.active_jobs[j1.id] = j1
@@ -49,6 +51,7 @@ def test_cancel_job_by_index():
 def test_cancel_all():
     state = AppState()
     qm = QueueManager(max_workers=2, state=state)
+    qm.is_paused = True
     j1 = DownloadJob(url="https://test.com/1")
     j2 = DownloadJob(url="https://test.com/2")
     j3 = DownloadJob(url="https://test.com/3")

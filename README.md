@@ -122,6 +122,15 @@ Type these commands directly at the `>>> ` prompt anytime:
 | `o` or `open` | Open `downloads` folder in Windows File Explorer |
 | `d` or `dir` | Change downloads folder destination |
 | `h` or `history` [clear] | View recent download history (or `h clear` to reset) |
+| `nowm <URL>` | Download clean unwatermarked video directly (TikTok, Douyin, CapCut) |
+| `sniff <URL>` | Sniff arbitrary webpage for embedded video streams (.m3u8/.mpd/.mp4) |
+| `clean <1..N> [delogo/crop]` | Remove corner watermark (delogo) or crop banner from video |
+| `norm [on/off/toggle]` | EBU R128 international broadcast audio loudness normalization (-16 LUFS) |
+| `lyrics [on/off | song]` | Synchronized lyrics (.lrc) auto-downloading & LRCLIB search query |
+| `dashboard` / `web [port]` | Launch modern glassmorphic web dashboard & local REST telemetry server |
+| `sub <list/add/toggle/check>` | Automated channel subscriptions & background upload monitor |
+| `webhook <list/add/test>` | Discord and HTTP JSON webhook completion notifications |
+| `batch <file.txt>` | Import multi-line text file of URLs and enqueue downloads |
 | `s` or `settings` | Full interactive settings menu |
 | `u` or `update` | Run `yt-dlp -U` to update yt-dlp to latest version |
 | `cls` or `clear` | Clear screen and reprint status dashboard |
@@ -282,9 +291,9 @@ Powered by `yt-dlp`:
 | [bin/](file:///f:/YTDLP/bin/) | Bundled standalone executables (`yt-dlp.exe`, `ffmpeg.exe`, `ffprobe.exe`, `aria2c.exe`) |
 | [data/](file:///f:/YTDLP/data/) | User configuration, history logs, and download archive (`config.json`, `history.json`, `archive.txt`) |
 | [scripts/](file:///f:/YTDLP/scripts/) | Setup utilities, desktop shortcut creator, and installer scripts |
-| [ytdlp_workstation/](file:///f:/YTDLP/ytdlp_workstation/) | Core modular package (`core/`, `engine/`, `extractors/`, `queue/`, `utils/`, `cli/`) |
+| [ytdlp_workstation/](file:///f:/YTDLP/ytdlp_workstation/) | Core modular package (`core/`, `engine/`, `extractors/`, `queue/`, `web/`, `utils/`, `cli/`) |
 | [downloads/](file:///f:/YTDLP/downloads/) | Default folder where downloaded media and music are saved |
-| [tests/](file:///f:/YTDLP/tests/) | Full Pytest automated test suite (23 unit & integration tests) |
+| [tests/](file:///f:/YTDLP/tests/) | Full Pytest automated test suite (172 unit & integration tests) |
 | [pyproject.toml](file:///f:/YTDLP/pyproject.toml) | Modern PEP 621 Python package configuration (v2.0) |
 | [requirements.txt](file:///f:/YTDLP/requirements.txt) | Python dependencies (`colorama`, `pyperclip`, `yt-dlp`) |
 | [.gitignore](file:///f:/YTDLP/.gitignore) | Git ignore rules excluding binaries (>100MB), personal downloads, and user logs |

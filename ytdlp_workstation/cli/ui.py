@@ -107,7 +107,11 @@ def print_help(topic: Optional[str] = None) -> None:
     {Fore.CYAN}help queue{Style.RESET_ALL}     : Queue inspection, cancel (e.g. 'cancel 1', 'cancel all'), workers
     {Fore.CYAN}help media{Style.RESET_ALL}     : Open folder, play video ('play 1'), reveal in explorer, retry
     {Fore.CYAN}help watermark{Style.RESET_ALL} : Clean no-watermark downloads (TikTok, Douyin, CapCut), web sniffer, delogo
-    {Fore.CYAN}help settings{Style.RESET_ALL}  : Cookies, SponsorBlock, speed limits, download directory
+    {Fore.CYAN}help subscriptions{Style.RESET_ALL}: Channel subscriptions, auto-download new videos
+    {Fore.CYAN}help webhooks{Style.RESET_ALL}  : Discord & generic HTTP notification webhooks
+    {Fore.CYAN}help batch{Style.RESET_ALL}     : Bulk URL text file imports
+    {Fore.CYAN}help web{Style.RESET_ALL}       : Local web dashboard & REST API
+    {Fore.CYAN}help settings{Style.RESET_ALL}  : Cookies, SponsorBlock, loudness norm, lyrics, speed limits
 
   {Fore.YELLOW}COMMON QUICK COMMANDS:{Style.RESET_ALL}
     {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Instant download (auto-detected quality or picker)
@@ -116,6 +120,9 @@ def print_help(topic: Optional[str] = None) -> None:
     {Fore.CYAN}clean <1..N | file>{Style.RESET_ALL}     : Remove corner watermark (delogo) or crop banner
     {Fore.CYAN}1080p / 720p / 4k [URL]{Style.RESET_ALL} : Download directly in specific quality
     {Fore.CYAN}mp3 / m4a / flac [URL]{Style.RESET_ALL}  : Download as audio track
+    {Fore.CYAN}norm [on/off/toggle]{Style.RESET_ALL}    : EBU R128 audio loudness normalization
+    {Fore.CYAN}lyrics [on/off | song]{Style.RESET_ALL}  : Auto-download or search synchronized .lrc lyrics
+    {Fore.CYAN}dashboard / web{Style.RESET_ALL}         : Open local web dashboard in browser (port 8484)
     {Fore.CYAN}queue{Style.RESET_ALL}                   : View active and pending downloads
     {Fore.CYAN}cancel <1..N | all>{Style.RESET_ALL}    : Cancel active or pending downloads
     {Fore.CYAN}play <1..N | song>{Style.RESET_ALL}     : Play downloaded video OR search music
@@ -148,6 +155,9 @@ def print_help(topic: Optional[str] = None) -> None:
   {Fore.CYAN}mp3 [URL]{Style.RESET_ALL}                 : Extract audio as MP3 (320kbps)
   {Fore.CYAN}m4a [URL]{Style.RESET_ALL}                 : Extract audio as AAC (.m4a)
   {Fore.CYAN}flac [URL]{Style.RESET_ALL}                : Extract audio as Lossless FLAC
+  {Fore.CYAN}norm [on/off/toggle]{Style.RESET_ALL}    : EBU R128 loudness normalization (-16 LUFS, -1.5dB TP)
+  {Fore.CYAN}lyrics <artist> - <title>{Style.RESET_ALL} : Query and display synchronized lyrics via LRCLIB
+  {Fore.CYAN}lyrics [on/off/toggle]{Style.RESET_ALL}  : Auto-download synchronized .lrc alongside music
 """)
     elif t in ("streaming", "stream", "hls", "m3u8", "cloud"):
         print(f"""
@@ -198,8 +208,36 @@ def print_help(topic: Optional[str] = None) -> None:
   {Fore.CYAN}dir{Style.RESET_ALL}                        : Change download destination folder
   {Fore.CYAN}update{Style.RESET_ALL} / {Fore.CYAN}u{Style.RESET_ALL}                : Update yt-dlp to the latest version
 """)
+    elif t in ("subscriptions", "subscription", "sub"):
+        print(f"""
+{Fore.CYAN}═══ CHANNEL & CREATOR SUBSCRIPTIONS ═══{Style.RESET_ALL}
+  {Fore.CYAN}sub list{Style.RESET_ALL}                        : List registered channel/creator subscriptions
+  {Fore.CYAN}sub add <url> [preset] [folder]{Style.RESET_ALL} : Subscribe to a channel (auto-downloads new uploads)
+  {Fore.CYAN}sub remove <id>{Style.RESET_ALL}                 : Unsubscribe from a channel
+  {Fore.CYAN}sub toggle <id>{Style.RESET_ALL}                 : Pause or resume subscription monitoring
+  {Fore.CYAN}sub check{Style.RESET_ALL}                      : Immediately check all subscriptions for new videos
+""")
+    elif t in ("webhooks", "webhook", "hooks"):
+        print(f"""
+{Fore.CYAN}═══ NOTIFICATION WEBHOOKS ═══{Style.RESET_ALL}
+  {Fore.CYAN}webhook list{Style.RESET_ALL}                     : List registered webhooks
+  {Fore.CYAN}webhook add <url> [events]{Style.RESET_ALL}        : Add Discord or generic webhook notification
+  {Fore.CYAN}webhook remove <id>{Style.RESET_ALL}              : Remove a webhook
+  {Fore.CYAN}webhook test <id | url>{Style.RESET_ALL}          : Send a test ping notification to verify webhook
+""")
+    elif t in ("batch", "import", "bulk"):
+        print(f"""
+{Fore.CYAN}═══ BATCH DOWNLOADS ═══{Style.RESET_ALL}
+  {Fore.CYAN}batch <urls.txt>{Style.RESET_ALL}                 : Import multi-line URL text file and enqueue
+""")
+    elif t in ("web", "dashboard", "gui", "ui"):
+        print(f"""
+{Fore.CYAN}═══ LOCAL WEB TELEMETRY DASHBOARD ═══{Style.RESET_ALL}
+  {Fore.CYAN}dashboard{Style.RESET_ALL} / {Fore.CYAN}web{Style.RESET_ALL}               : Launch local web UI in default browser (port 8484)
+  {Fore.CYAN}dashboard <port>{Style.RESET_ALL}              : Launch local web UI on custom port (e.g. web 8080)
+""")
     else:
-        print(f"{Fore.YELLOW}[!] Unknown help topic '{topic}'. Available: downloads, audio, streaming, queue, media, settings.{Style.RESET_ALL}\n")
+        print(f"{Fore.YELLOW}[!] Unknown help topic '{topic}'. Available: downloads, audio, streaming, queue, media, watermark, subscriptions, webhooks, batch, web, settings.{Style.RESET_ALL}\n")
 
 
 def parse_speed_to_bytes(speed_str: str) -> float:

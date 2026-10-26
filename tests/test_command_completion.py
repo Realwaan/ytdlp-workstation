@@ -94,3 +94,32 @@ def test_completion_with_queue_jobs():
     assert "1" in candidates
     assert job1.id[:8] in candidates
     qm.stop_requested = True
+
+
+def test_subcommand_completion_sub_and_webhook():
+    start, end, prefix, candidates = get_completion_candidates("sub ", 4)
+    assert "list" in candidates
+    assert "add" in candidates
+    assert "check" in candidates
+
+    start, end, prefix, candidates = get_completion_candidates("webhook ", 8)
+    assert "list" in candidates
+    assert "add" in candidates
+    assert "test" in candidates
+
+
+def test_subcommand_completion_norm_and_lyrics():
+    start, end, prefix, candidates = get_completion_candidates("norm ", 5)
+    assert "on" in candidates
+    assert "off" in candidates
+    assert "toggle" in candidates
+
+    start, end, prefix, candidates = get_completion_candidates("lyrics ", 7)
+    assert "on" in candidates
+    assert "off" in candidates
+    assert "toggle" in candidates
+
+    start, end, prefix, candidates = get_completion_candidates("dash", 4)
+    assert "dashboard" in candidates
+
+

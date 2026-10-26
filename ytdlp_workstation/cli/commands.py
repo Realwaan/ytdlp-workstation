@@ -13,13 +13,18 @@ from typing import Optional
 from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
-from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX
+from ..core.database import DB
+from ..core.webhooks import WEBHOOK_DISPATCHER
+from ..queue.subscription_scheduler import SubscriptionScheduler
+from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX, clean_url
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
 from ..extractors.no_watermark import resolve_no_watermark_media
 from ..extractors.web_sniffer import sniff_web_media
 from ..engine.watermark_remover import clean_video
+from ..extractors.lyrics import fetch_lyrics, search_lyrics, save_lrc_file
+from ..web.server import start_dashboard_server, get_dashboard_server
 from ..utils.system import sanitize_filename, open_file_or_folder, reveal_in_file_manager
 from .ui import Fore, Style, print_banner
 from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats, ask_text
@@ -749,4 +754,277 @@ def cmd_clean(raw: str, state: Optional[AppState] = None):
         print(f"    Saved: {Fore.LIGHTGREEN_EX}{out.name}{Style.RESET_ALL} ({sz_mb:.1f} MB)\n")
     else:
         print(f"{Fore.RED}[!] Cleanup failed. Check that FFmpeg is available and file is not locked.{Style.RESET_ALL}\n")
+
+
+def cmd_sub(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Manage channel and creator subscriptions (list, add, remove, toggle, check)."""
+    state = _resolve_state(state)
+    tokens = raw.split()
+    sub_cmd = tokens[1].lower() if len(tokens) > 1 else "list"
+
+    if sub_cmd in ("list", "ls"):
+        subs = DB.list_subscriptions()
+        if not subs:
+            print(f"\n{Fore.YELLOW}[!] No channel subscriptions registered.{Style.RESET_ALL}")
+            print(f"    Add one using: {Fore.GREEN}sub add <channel_url> [preset_id] [folder]{Style.RESET_ALL}\n")
+            return
+
+        print(f"\n{Fore.CYAN}═══ 📺 CHANNEL & CREATOR SUBSCRIPTIONS ═══{Style.RESET_ALL}")
+        for s in subs:
+            status_badge = f"{Fore.GREEN}ACTIVE{Style.RESET_ALL}" if s.get("enabled") else f"{Fore.LIGHTBLACK_EX}PAUSED{Style.RESET_ALL}"
+            last_chk = s.get("last_checked_at") or "Never"
+            folder_info = f" -> {s.get('custom_folder')}" if s.get("custom_folder") else ""
+            print(f"  {Fore.YELLOW}[#{s.get('id')}]{Style.RESET_ALL} {Fore.WHITE}{s.get('title')}{Style.RESET_ALL} [{status_badge}]")
+            print(f"      URL: {Fore.CYAN}{s.get('url')}{Style.RESET_ALL}")
+            print(f"      Every: {s.get('check_interval_mins')}m | Last: {last_chk}{folder_info} | Preset #{s.get('preset_id')}")
+        print("")
+
+    elif sub_cmd == "add":
+        if len(tokens) < 3:
+            print(f"{Fore.RED}[!] Usage: sub add <channel_url> [preset_id] [folder]{Style.RESET_ALL}\n")
+            return
+        target_url = clean_url(tokens[2])
+        preset_id = int(tokens[3]) if len(tokens) > 3 and tokens[3].isdigit() else 1
+        folder = tokens[4] if len(tokens) > 4 else None
+
+        sub_id = DB.add_subscription(url=target_url, preset_id=preset_id, folder=folder)
+        print(f"\n{Fore.GREEN}[✓] Subscribed [#{sub_id}]:{Style.RESET_ALL} {Fore.CYAN}{target_url}{Style.RESET_ALL}")
+        print(f"    Preset: #{preset_id} | Target Folder: {folder or 'Default downloads'}\n")
+
+    elif sub_cmd in ("remove", "rm", "delete"):
+        if len(tokens) < 3 or not tokens[2].isdigit():
+            print(f"{Fore.RED}[!] Usage: sub remove <id>{Style.RESET_ALL}\n")
+            return
+        sub_id = int(tokens[2])
+        if DB.remove_subscription(sub_id):
+            print(f"\n{Fore.GREEN}[✓] Removed subscription #{sub_id}{Style.RESET_ALL}\n")
+        else:
+            print(f"\n{Fore.RED}[!] Subscription #{sub_id} not found.{Style.RESET_ALL}\n")
+
+    elif sub_cmd in ("toggle", "pause", "resume"):
+        if len(tokens) < 3 or not tokens[2].isdigit():
+            print(f"{Fore.RED}[!] Usage: sub toggle <id>{Style.RESET_ALL}\n")
+            return
+        sub_id = int(tokens[2])
+        if DB.toggle_subscription(sub_id):
+            updated = DB.get_subscription(sub_id)
+            state_str = "ACTIVE" if updated and updated.get("enabled") else "PAUSED"
+            print(f"\n{Fore.GREEN}[✓] Subscription #{sub_id} is now {state_str}.{Style.RESET_ALL}\n")
+        else:
+            print(f"\n{Fore.RED}[!] Subscription #{sub_id} not found.{Style.RESET_ALL}\n")
+
+    elif sub_cmd in ("check", "sync", "poll"):
+        print(f"\n{Fore.CYAN}[⚡] Checking all enabled channel subscriptions for new uploads...{Style.RESET_ALL}")
+        scheduler = SubscriptionScheduler(queue_mgr, state=state, db=DB)
+        new_cnt = scheduler.check_all()
+        print(f"{Fore.GREEN}[✓] Subscription check complete. Enqueued {new_cnt} new media item(s).{Style.RESET_ALL}\n")
+
+    else:
+        print(f"{Fore.RED}[!] Usage: sub <list | add | remove | toggle | check>{Style.RESET_ALL}\n")
+
+
+def cmd_webhook(raw: str, state: Optional[AppState] = None):
+    """Manage notification webhooks (list, add, remove, test)."""
+    state = _resolve_state(state)
+    tokens = raw.split()
+    sub_cmd = tokens[1].lower() if len(tokens) > 1 else "list"
+
+    if sub_cmd in ("list", "ls"):
+        hooks = DB.list_webhooks()
+        if not hooks:
+            print(f"\n{Fore.YELLOW}[!] No webhooks registered.{Style.RESET_ALL}")
+            print(f"    Add one using: {Fore.GREEN}webhook add <url>{Style.RESET_ALL}\n")
+            return
+
+        print(f"\n{Fore.CYAN}═══ 🔔 REGISTERED NOTIFICATION WEBHOOKS ═══{Style.RESET_ALL}")
+        for h in hooks:
+            hook_type = "Discord" if "discord" in h.get("url", "") else "Generic JSON"
+            print(f"  {Fore.YELLOW}[#{h.get('id')}]{Style.RESET_ALL} {Fore.WHITE}{hook_type}{Style.RESET_ALL}")
+            print(f"      URL: {Fore.CYAN}{h.get('url')[:65]}...{Style.RESET_ALL}")
+            print(f"      Events: {h.get('event_types', 'all')}")
+        print("")
+
+    elif sub_cmd == "add":
+        if len(tokens) < 3:
+            print(f"{Fore.RED}[!] Usage: webhook add <url> [event_types]{Style.RESET_ALL}\n")
+            return
+        hook_url = tokens[2].strip("\"'")
+        events = tokens[3].lower() if len(tokens) > 3 else "all"
+        hid = DB.add_webhook(hook_url, event_types=events)
+        print(f"\n{Fore.GREEN}[✓] Webhook #{hid} registered!{Style.RESET_ALL} ({hook_url[:45]}...)\n")
+
+    elif sub_cmd in ("remove", "rm", "delete"):
+        if len(tokens) < 3 or not tokens[2].isdigit():
+            print(f"{Fore.RED}[!] Usage: webhook remove <id>{Style.RESET_ALL}\n")
+            return
+        hid = int(tokens[2])
+        if DB.delete_webhook(hid):
+            print(f"\n{Fore.GREEN}[✓] Webhook #{hid} removed.{Style.RESET_ALL}\n")
+        else:
+            print(f"\n{Fore.RED}[!] Webhook #{hid} not found.{Style.RESET_ALL}\n")
+
+    elif sub_cmd == "test":
+        target = tokens[2] if len(tokens) > 2 else ""
+        test_url = target
+        if target.isdigit():
+            hooks = DB.list_webhooks()
+            match = [h for h in hooks if h.get("id") == int(target)]
+            test_url = match[0].get("url") if match else ""
+
+        if not test_url:
+            print(f"{Fore.RED}[!] Usage: webhook test <id | url>{Style.RESET_ALL}\n")
+            return
+
+        print(f"\n{Fore.CYAN}[⚡] Sending test ping notification...{Style.RESET_ALL}")
+        ok = WEBHOOK_DISPATCHER.test_webhook(test_url)
+        if ok:
+            print(f"{Fore.GREEN}[✓] Webhook notification dispatched successfully!{Style.RESET_ALL}\n")
+        else:
+            print(f"{Fore.RED}[!] Failed to send webhook. Check URL and connection.{Style.RESET_ALL}\n")
+
+    else:
+        print(f"{Fore.RED}[!] Usage: webhook <list | add | remove | test>{Style.RESET_ALL}\n")
+
+
+def cmd_batch(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Import a text file containing multiple URLs and enqueue them for download."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    if len(parts) < 2:
+        print(f"\n{Fore.RED}[!] Usage: batch <path/to/urls.txt>{Style.RESET_ALL}\n")
+        return
+
+    filepath = Path(parts[1].strip("\"'"))
+    if not filepath.exists() or not filepath.is_file():
+        print(f"\n{Fore.RED}[!] File not found: {filepath}{Style.RESET_ALL}\n")
+        return
+
+    enqueued_count = 0
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+
+        print(f"\n{Fore.CYAN}[⚡] Importing batch download list from {filepath.name}...{Style.RESET_ALL}")
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            cleaned = clean_url(line)
+            if is_valid_media_url(cleaned) or cleaned.startswith(("http://", "https://")):
+                job = DownloadJob(url=cleaned)
+                queue_mgr.enqueue(job)
+                enqueued_count += 1
+
+        print(f"{Fore.GREEN}[✓] Successfully enqueued {enqueued_count} task(s) from {filepath.name}!{Style.RESET_ALL}\n")
+    except Exception as e:
+        print(f"{Fore.RED}[!] Failed reading batch file: {e}{Style.RESET_ALL}\n")
+
+
+def cmd_norm(raw: str, state: Optional[AppState] = None):
+    """Toggle or view EBU R128 audio loudness normalization."""
+    state = _resolve_state(state)
+    parts = raw.split()
+    if len(parts) > 1:
+        arg = parts[1].lower()
+        if arg in ("on", "1", "enable", "true"):
+            state.set_config("audio_loudness_norm", True)
+            print(f"\n{Fore.GREEN}[✓] Audio Loudness Normalization enabled (EBU R128: -16 LUFS, -1.5dB TP).{Style.RESET_ALL}\n")
+        elif arg in ("off", "0", "disable", "false"):
+            state.set_config("audio_loudness_norm", False)
+            print(f"\n{Fore.YELLOW}[✓] Audio Loudness Normalization disabled.{Style.RESET_ALL}\n")
+        elif arg == "toggle":
+            cur = state.config.get("audio_loudness_norm", False)
+            state.set_config("audio_loudness_norm", not cur)
+            print(f"\n{Fore.GREEN}[✓] Audio Loudness Normalization is now: {'ON' if not cur else 'OFF'}{Style.RESET_ALL}\n")
+        else:
+            print(f"{Fore.RED}[!] Usage: norm <on | off | toggle>{Style.RESET_ALL}\n")
+    else:
+        cur = state.config.get("audio_loudness_norm", False)
+        status_str = f"{Fore.GREEN}ENABLED (EBU R128 -16 LUFS)" if cur else f"{Fore.RED}DISABLED"
+        print(f"\n{Fore.CYAN}Audio Loudness Normalization:{Style.RESET_ALL} {status_str}{Style.RESET_ALL}")
+        print(f"{Fore.LIGHTBLACK_EX}Standardizes audio volume across disparate tracks during extraction.")
+        print(f"Usage: 'norm on' to enable, 'norm off' to disable, 'norm toggle' to switch.{Style.RESET_ALL}\n")
+
+
+def cmd_lyrics(raw: str, state: Optional[AppState] = None):
+    """Search lyrics or toggle automatic synchronized .lrc downloading."""
+    state = _resolve_state(state)
+    parts = raw.split(maxsplit=1)
+    if len(parts) > 1:
+        arg = parts[1].strip()
+        if arg.lower() in ("on", "enable", "1", "true"):
+            state.set_config("download_lyrics", True)
+            print(f"\n{Fore.GREEN}[✓] Auto-downloading of synchronized lyrics (.lrc) is now ENABLED.{Style.RESET_ALL}\n")
+            return
+        elif arg.lower() in ("off", "disable", "0", "false"):
+            state.set_config("download_lyrics", False)
+            print(f"\n{Fore.YELLOW}[✓] Auto-downloading of synchronized lyrics (.lrc) is now DISABLED.{Style.RESET_ALL}\n")
+            return
+        elif arg.lower() == "toggle":
+            cur = state.config.get("download_lyrics", False)
+            state.set_config("download_lyrics", not cur)
+            print(f"\n{Fore.GREEN}[✓] Auto-downloading lyrics is now: {'ON' if not cur else 'OFF'}{Style.RESET_ALL}\n")
+            return
+
+        # Treat as search query: e.g. "Adele - Hello" or "Bohemian Rhapsody"
+        print(f"\n{Fore.CYAN}[🎵] Searching LRCLIB for lyrics:{Style.RESET_ALL} {Fore.WHITE}{arg}{Style.RESET_ALL}")
+        if " - " in arg:
+            art, trk = arg.split(" - ", 1)
+            res = fetch_lyrics(track_name=trk, artist_name=art)
+        else:
+            res = search_lyrics(arg)
+
+        if not res:
+            print(f"{Fore.RED}[!] No lyrics found for '{arg}'.{Style.RESET_ALL}\n")
+            return
+
+        print(f"{Fore.GREEN}┌───────────────────────────────────────────────────────────────┐{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}│ {Style.BRIGHT}{Fore.WHITE}🎤 {res.get('track_name')} - {res.get('artist_name')}{Style.RESET_ALL}")
+        if res.get("album_name"):
+            print(f"{Fore.GREEN}│ {Fore.WHITE}Album: {Fore.YELLOW}{res.get('album_name')}{Style.RESET_ALL}")
+        synced = res.get("synced_lyrics")
+        has_synced = bool(synced and synced.strip())
+        print(f"{Fore.GREEN}│ {Fore.WHITE}Type : {Fore.LIGHTGREEN_EX}{'Synchronized (.lrc)' if has_synced else 'Plain Text'}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}└───────────────────────────────────────────────────────────────┘{Style.RESET_ALL}\n")
+
+        lyrics_text = synced if has_synced else res.get("plain_lyrics", "")
+        preview_lines = lyrics_text.strip().splitlines()[:12]
+        for l in preview_lines:
+            print(f"  {Fore.LIGHTCYAN_EX}{l}{Style.RESET_ALL}")
+        if len(lyrics_text.strip().splitlines()) > 12:
+            print(f"  {Fore.LIGHTBLACK_EX}... ({len(lyrics_text.strip().splitlines()) - 12} more lines){Style.RESET_ALL}")
+        print()
+    else:
+        cur = state.config.get("download_lyrics", False)
+        status_str = f"{Fore.GREEN}ENABLED (Auto-save .lrc on music download)" if cur else f"{Fore.RED}DISABLED"
+        print(f"\n{Fore.CYAN}Synchronized Lyrics (.lrc) Subsystem:{Style.RESET_ALL} {status_str}{Style.RESET_ALL}")
+        print(f"{Fore.LIGHTBLACK_EX}Commands:")
+        print(f"  lyrics on / lyrics off / lyrics toggle : Toggle auto .lrc downloading")
+        print(f"  lyrics <artist> - <title>              : Query LRCLIB directly in terminal{Style.RESET_ALL}\n")
+
+
+def cmd_dashboard(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """Launch or open the local web telemetry dashboard."""
+    state = _resolve_state(state)
+    parts = raw.split()
+    port = state.config.get("web_port", 8484)
+    if len(parts) > 1 and parts[1].isdigit():
+        port = int(parts[1])
+
+    server = get_dashboard_server()
+    if server and server.is_running():
+        print(f"\n{Fore.GREEN}[✓] Web Dashboard is running at:{Style.RESET_ALL} {Fore.CYAN}http://127.0.0.1:{server.port}{Style.RESET_ALL}")
+        import webbrowser
+        webbrowser.open(f"http://127.0.0.1:{server.port}")
+        print(f"{Fore.LIGHTBLACK_EX}Opening browser window...{Style.RESET_ALL}\n")
+    else:
+        print(f"\n{Fore.CYAN}[⚡] Starting Web Dashboard server on port {port}...{Style.RESET_ALL}")
+        server = start_dashboard_server(queue_mgr, state=state, port=port, open_browser=True)
+        if server and server.is_running():
+            print(f"{Fore.GREEN}[✓] Web Dashboard live at:{Style.RESET_ALL} {Fore.CYAN}http://127.0.0.1:{server.port}{Style.RESET_ALL}\n")
+        else:
+            print(f"{Fore.RED}[!] Failed to bind Web Dashboard server.{Style.RESET_ALL}\n")
+
+
 

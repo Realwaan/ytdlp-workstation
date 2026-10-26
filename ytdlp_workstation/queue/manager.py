@@ -17,6 +17,7 @@ from ..core.events import BUS, EventType
 from ..engine.native_engine import execute_download_job
 from ..engine.fragment_merger import find_fragment_groups, merge_fragment_group
 from ..extractors.spotify import embed_cover_art_ffmpeg
+from ..extractors.lyrics import fetch_and_save_lyrics_for_media
 from ..utils.notifications import play_sound, send_windows_toast
 
 
@@ -134,6 +135,42 @@ class QueueManager:
                             mp3_target = recent[0]
                     if mp3_target and mp3_target.exists():
                         embed_cover_art_ffmpeg(mp3_target, job.spotify_thumbnail)
+                except Exception:
+                    pass
+
+            # Fetch synchronized lyrics (.lrc) if enabled
+            if config.get("download_lyrics", False):
+                try:
+                    meta = job.extra_metadata or {}
+                    artist = meta.get("artist")
+                    title = meta.get("title")
+                    if not (artist and title) and job.display_title and " - " in job.display_title:
+                        parts = job.display_title.split(" - ", 1)
+                        artist = parts[0].strip()
+                        title = parts[1].strip()
+                    if artist and title:
+                        audio_cand = None
+                        if job.custom_output_template and job.custom_output_template.endswith(".%(ext)s"):
+                            for ext in (".mp3", ".flac", ".m4a", ".opus", ".wav"):
+                                c = Path(job.custom_output_template.replace(".%(ext)s", ext))
+                                if c.exists():
+                                    audio_cand = c
+                                    break
+                        if not audio_cand:
+                            recent_audio = sorted(
+                                [p for p in Path(effective_target).glob("*") if p.suffix.lower() in (".mp3", ".flac", ".m4a", ".opus", ".wav")],
+                                key=lambda p: p.stat().st_mtime,
+                                reverse=True
+                            )
+                            if recent_audio and (time.time() - recent_audio[0].stat().st_mtime) < 60:
+                                audio_cand = recent_audio[0]
+                        if audio_cand and audio_cand.exists():
+                            fetch_and_save_lyrics_for_media(
+                                audio_cand,
+                                artist=artist,
+                                track=title,
+                                album=meta.get("album"),
+                            )
                 except Exception:
                     pass
 
@@ -297,6 +334,20 @@ class QueueManager:
                 BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
                 count += 1
             return count
+
+    def get_active_jobs(self) -> List[DownloadJob]:
+        """Return a copy of currently active jobs."""
+        with self.lock:
+            return list(self.active_jobs.values())
+
+    def get_queued_jobs(self) -> List[DownloadJob]:
+        """Return a copy of currently queued/pending jobs."""
+        with self.lock:
+            return list(self.pending_queue)
+
+    def cancel(self, target: str) -> bool:
+        """Alias for cancel_job."""
+        return self.cancel_job(target)
 
     def list_jobs(self) -> Dict[str, List[DownloadJob]]:
         """Return snapshot of active, pending, and recent completed jobs."""

@@ -87,6 +87,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "codec_preference": "auto",         # 'auto', 'compatibility' (H.264/AAC), 'quality' (AV1/VP9)
     "music_engine_provider": "ytm",     # 'ytm' (YouTube Music clean studio) or 'yt' (Standard YouTube)
     "prefer_no_watermark": True,        # Prefer clean unwatermarked streams (TikTok, Douyin, CapCut, etc.)
+    "audio_loudness_norm": False,       # EBU R128 audio normalization (-af loudnorm) for audio extraction
+    "download_lyrics": False,           # Auto-fetch synchronized .lrc lyrics for Spotify/music downloads
+    "web_port": 8484,                   # Port for optional local web dashboard
 }
 
 

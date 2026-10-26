@@ -44,6 +44,12 @@ from .commands import (
     cmd_nowm,
     cmd_sniff,
     cmd_clean,
+    cmd_sub,
+    cmd_webhook,
+    cmd_batch,
+    cmd_norm,
+    cmd_lyrics,
+    cmd_dashboard,
     enqueue_spotify_download,
     enqueue_media_url,
     handle_preset_shortcut,
@@ -89,6 +95,8 @@ def toggle_settings_menu(state: Optional[AppState] = None):
     print(f"  [9] Max Parallel Concurrent Workers           : {state.config.get('max_concurrent_downloads', 2)}")
     print(f"  [a] Codec Preference                          : {state.config.get('codec_preference', 'auto').upper()}")
     print(f"  [w] Prefer No-Watermark Streams               : {'ON' if state.config.get('prefer_no_watermark', True) else 'OFF'}")
+    print(f"  [n] Audio Loudness Normalization (EBU R128)   : {'ON' if state.config.get('audio_loudness_norm', False) else 'OFF'}")
+    print(f"  [l] Auto-Download Synchronized Lyrics (.lrc)  : {'ON' if state.config.get('download_lyrics', False) else 'OFF'}")
     print(f"  [b] Back\n")
 
     choice = ask_text(f"{Fore.CYAN}Enter setting number to toggle/change: {Style.RESET_ALL}", state).lower()
@@ -122,6 +130,12 @@ def toggle_settings_menu(state: Optional[AppState] = None):
     elif choice == "w":
         cur_wm = state.config.get("prefer_no_watermark", True)
         state.set_config("prefer_no_watermark", not cur_wm)
+    elif choice == "n":
+        cur_norm = state.config.get("audio_loudness_norm", False)
+        state.set_config("audio_loudness_norm", not cur_norm)
+    elif choice == "l":
+        cur_lyr = state.config.get("download_lyrics", False)
+        state.set_config("download_lyrics", not cur_lyr)
     print(f"{Fore.GREEN}[✓] Settings saved.{Style.RESET_ALL}\n")
 
 
@@ -215,8 +229,20 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
                 enqueue_spotify_download(s_url, queue_mgr, state=state)
     elif first_word in ("archive", "arch"):
         cmd_archive_management(raw, state=state)
+    elif first_word in ("sub", "subscription", "subscriptions") or (first_word == "subs" and arg_part.split() and arg_part.split()[0].lower() in ("add", "list", "ls", "rm", "remove", "delete", "toggle", "check", "sync", "poll")):
+        cmd_sub(raw, queue_mgr, state=state)
+    elif first_word in ("webhook", "webhooks", "hook", "hooks"):
+        cmd_webhook(raw, state=state)
+    elif first_word in ("batch", "import", "bulk"):
+        cmd_batch(raw, queue_mgr, state=state)
     elif first_word == "codec":
         cmd_codec(raw, state=state)
+    elif first_word in ("norm", "loudnorm", "loudness"):
+        cmd_norm(raw, state=state)
+    elif first_word in ("lyrics", "lrc"):
+        cmd_lyrics(raw, state=state)
+    elif first_word in ("dashboard", "web", "gui", "ui"):
+        cmd_dashboard(raw, queue_mgr, state=state)
     elif first_word in ("site", "website"):
         if arg_part:
             key = arg_part.strip().lower()
