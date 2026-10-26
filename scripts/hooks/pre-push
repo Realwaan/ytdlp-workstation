@@ -1,0 +1,22 @@
+#!/bin/sh
+# Local Git pre-push hook for YT-DLP Workstation
+# Ensures all tests pass before any git push is sent to the remote repository.
+
+echo ""
+echo "==================================================="
+echo "  [Local CI Hook] Running test suite before push..."
+echo "==================================================="
+
+python -m pytest -q
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ [ABORT] Test suite failed! Push cancelled to protect repository."
+    echo "   Run 'python -m pytest -v' or 'scripts\\run_tests.bat' to inspect failures."
+    echo ""
+    exit 1
+fi
+
+echo "✅ [SUCCESS] All tests passed! Proceeding with git push."
+echo ""
+exit 0
