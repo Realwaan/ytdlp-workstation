@@ -9,6 +9,7 @@ import shutil
 import ctypes
 import subprocess
 from pathlib import Path
+from typing import Any, Union
 from ..core.config import BASE_DIR, BIN_DIR, YTDLP_EXE, FFMPEG_EXE, DEFAULT_DOWNLOAD_DIR
 
 
@@ -58,6 +59,51 @@ def set_console_title(title: str) -> None:
 def reset_console_title() -> None:
     """Reset console title to default workstation title."""
     set_console_title("★ YT-DLP Supercharged Workstation ★")
+
+
+def open_file_or_folder(target: Any) -> bool:
+    """Open a file or directory with system default handler (Windows, macOS, Linux)."""
+    try:
+        p = Path(target)
+        if not p.exists():
+            return False
+        if os.name == "nt":
+            if hasattr(os, "startfile"):
+                os.startfile(str(p))
+            else:
+                subprocess.run(["cmd", "/c", "start", "", str(p)], check=False)
+            return True
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(p)], check=False)
+            return True
+        else:
+            subprocess.run(["xdg-open", str(p)], check=False)
+            return True
+    except Exception:
+        return False
+
+
+def reveal_in_file_manager(target: Any) -> bool:
+    """Reveal a file or directory in the system file manager."""
+    try:
+        p = Path(target)
+        if not p.exists():
+            return False
+        if os.name == "nt":
+            if p.is_file():
+                subprocess.run(["explorer.exe", f"/select,{str(p.resolve())}"], check=False)
+            else:
+                subprocess.run(["explorer.exe", str(p.resolve())], check=False)
+            return True
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(p.resolve())], check=False)
+            return True
+        else:
+            folder = p.parent if p.is_file() else p
+            subprocess.run(["xdg-open", str(folder.resolve())], check=False)
+            return True
+    except Exception:
+        return False
 
 
 def bootstrap_workstation_environment() -> None:

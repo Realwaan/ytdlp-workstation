@@ -28,7 +28,7 @@ from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url
 from ..engine.fragment_merger import find_fragment_groups, merge_all_pending_fragments
-from ..utils.system import sanitize_filename
+from ..utils.system import sanitize_filename, open_file_or_folder
 from .console import CONSOLE
 from .ui import Fore, Style, print_banner, print_help, format_job_progress, format_linux_bar
 from .input_reader import prompt_video_quality, inspect_and_pick_formats, ask_text
@@ -332,7 +332,10 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
     elif first_word in ("o", "open"):
         folder = Path(state.config.get("download_dir", DEFAULT_DOWNLOAD_DIR))
         folder.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(folder))
+        if hasattr(os, "startfile"):
+            os.startfile(str(folder))
+        else:
+            open_file_or_folder(folder)
     elif first_word in ("d", "dir"):
         new_d = ask_text(f"New folder path (current: {state.config.get('download_dir')}): ", state)
         if new_d:

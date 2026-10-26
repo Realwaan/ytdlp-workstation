@@ -16,9 +16,10 @@ history.json
 archive.txt
 data/config.json
 data/history.json
-data/archive.txt
+data/*.db
 data/*.db-shm
 data/*.db-wal
+*.db
 downloads/
 *.mp4
 *.mkv

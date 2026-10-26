@@ -20,7 +20,7 @@ from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_musi
 from ..extractors.no_watermark import resolve_no_watermark_media
 from ..extractors.web_sniffer import sniff_web_media
 from ..engine.watermark_remover import clean_video
-from ..utils.system import sanitize_filename
+from ..utils.system import sanitize_filename, open_file_or_folder, reveal_in_file_manager
 from .ui import Fore, Style, print_banner
 from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats, ask_text
 
@@ -244,7 +244,10 @@ def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
         if media_file and media_file.exists():
             print(f"\n{Fore.GREEN}[▶] Launching media player:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
             try:
-                os.startfile(str(media_file))
+                if hasattr(os, "startfile"):
+                    os.startfile(str(media_file))
+                else:
+                    open_file_or_folder(media_file)
             except Exception as e:
                 print(f"{Fore.RED}[!] Could not launch player: {e}{Style.RESET_ALL}\n")
             return
@@ -256,7 +259,10 @@ def cmd_play(raw: str, queue_mgr, state: Optional[AppState] = None):
         if media_file and media_file.exists():
             print(f"\n{Fore.GREEN}[▶] Launching media player:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
             try:
-                os.startfile(str(media_file))
+                if hasattr(os, "startfile"):
+                    os.startfile(str(media_file))
+                else:
+                    open_file_or_folder(media_file)
             except Exception as e:
                 print(f"{Fore.RED}[!] Could not launch player: {e}{Style.RESET_ALL}\n")
             return
@@ -298,13 +304,23 @@ def cmd_reveal(raw: str, state: Optional[AppState] = None):
     if media_file and media_file.exists():
         print(f"\n{Fore.GREEN}[📂] Revealing in Explorer:{Style.RESET_ALL} {Fore.WHITE}{media_file.name}{Style.RESET_ALL}\n")
         try:
-            subprocess.run(["explorer.exe", f"/select,{str(media_file.resolve())}"])
+            if not reveal_in_file_manager(media_file):
+                if hasattr(os, "startfile"):
+                    os.startfile(str(download_dir))
+                else:
+                    open_file_or_folder(download_dir)
         except Exception:
-            os.startfile(str(download_dir))
+            if hasattr(os, "startfile"):
+                os.startfile(str(download_dir))
+            else:
+                open_file_or_folder(download_dir)
     else:
         print(f"\n{Fore.YELLOW}[!] File not found. Opening downloads folder...{Style.RESET_ALL}\n")
         download_dir.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(download_dir))
+        if hasattr(os, "startfile"):
+            os.startfile(str(download_dir))
+        else:
+            open_file_or_folder(download_dir)
 
 
 def cmd_retry(raw: str, queue_mgr, state: Optional[AppState] = None):

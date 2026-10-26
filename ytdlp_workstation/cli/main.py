@@ -18,7 +18,7 @@ from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, CONFIG_FILE, YTDLP_EXE
 from ..queue.manager import QueueManager
 from ..engine.process_supervisor import SUPERVISOR
-from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment
+from ..utils.system import cleanup_orphaned_fragments, bootstrap_workstation_environment, set_console_title
 from .console import CONSOLE
 from .ui import (
     Fore,
@@ -36,8 +36,7 @@ from .repl import run_repl
 def main(state: Optional[AppState] = None):
     state = resolve_state(state)
 
-    if os.name == "nt":
-        os.system("title YT-DLP Supercharged Workstation v2.0")
+    set_console_title("YT-DLP Supercharged Workstation v2.0")
 
     bootstrap_workstation_environment()
     CONSOLE.install()
