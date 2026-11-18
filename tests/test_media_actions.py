@@ -10,10 +10,12 @@ from ytdlp_workstation.cli.commands import (
 from ytdlp_workstation.cli.command_dispatcher import handle_user_command
 from ytdlp_workstation.core.state import AppState, DownloadJob
 from ytdlp_workstation.core.history import HistoryManager
+from ytdlp_workstation.core.config import ConfigManager
 
 
 def test_resolve_media_file_from_history(tmp_path):
-    state = AppState()
+    cfg_mgr = ConfigManager(config_path=tmp_path / "config.json")
+    state = AppState(config_manager=cfg_mgr)
     test_video = tmp_path / "test_movie.mp4"
     test_video.write_text("dummy")
 
@@ -34,7 +36,8 @@ def test_resolve_media_file_from_history(tmp_path):
 
 
 def test_cmd_play_opens_file(tmp_path):
-    state = AppState()
+    cfg_mgr = ConfigManager(config_path=tmp_path / "config.json")
+    state = AppState(config_manager=cfg_mgr)
     test_video = tmp_path / "test_movie.mp4"
     test_video.write_text("dummy")
     state.config_manager.set("download_dir", str(tmp_path))
@@ -56,7 +59,8 @@ def test_cmd_play_opens_file(tmp_path):
 
 
 def test_cmd_reveal_invokes_explorer(tmp_path):
-    state = AppState()
+    cfg_mgr = ConfigManager(config_path=tmp_path / "config.json")
+    state = AppState(config_manager=cfg_mgr)
     test_video = tmp_path / "test_movie.mp4"
     test_video.write_text("dummy")
     state.config_manager.set("download_dir", str(tmp_path))
@@ -103,7 +107,8 @@ def test_cmd_retry_reenqueues_failed_job(capsys, tmp_path):
 
 
 def test_command_dispatcher_routes_reveal_and_retry(capsys, tmp_path):
-    state = AppState()
+    cfg_mgr = ConfigManager(config_path=tmp_path / "config.json")
+    state = AppState(config_manager=cfg_mgr)
     state.history_manager = HistoryManager(history_file=tmp_path / "h.json", archive_file=tmp_path / "a.txt")
     empty_dir = tmp_path / "empty_dl"
     empty_dir.mkdir()

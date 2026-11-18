@@ -6,8 +6,9 @@ Handles portable installation vs user-home directory data storage.
 import os
 import sys
 import json
+import importlib.util
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 # Root repository or package directory
 MODULE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -44,6 +45,16 @@ else:
     DATA_DIR = USER_DATA_DIR
     DEFAULT_DOWNLOAD_DIR = Path.home() / "Downloads" / "YT-DLP"
 
+# Optional overrides (used by the test suite so it never touches the user's real
+# config.json / history.json / workstation.db / downloads folder).
+_DATA_DIR_OVERRIDE = os.environ.get("YTDLP_WS_DATA_DIR")
+if _DATA_DIR_OVERRIDE:
+    DATA_DIR = USER_DATA_DIR = Path(_DATA_DIR_OVERRIDE)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+_DOWNLOAD_DIR_OVERRIDE = os.environ.get("YTDLP_WS_DOWNLOAD_DIR")
+if _DOWNLOAD_DIR_OVERRIDE:
+    DEFAULT_DOWNLOAD_DIR = Path(_DOWNLOAD_DIR_OVERRIDE)
+
 
 def _find_binary(name: str) -> Path:
     """Locate executable in bin/ subfolder or root folder."""
@@ -57,6 +68,25 @@ def _find_binary(name: str) -> Path:
 YTDLP_EXE = _find_binary("yt-dlp.exe")
 FFMPEG_EXE = _find_binary("ffmpeg.exe")
 ARIA2C_EXE = _find_binary("aria2c.exe")
+
+_HAS_YTDLP_MOD: Optional[bool] = None
+
+
+def get_ytdlp_cli_prefix() -> List[str]:
+    """Return the fastest CLI command prefix to invoke yt-dlp.
+
+    Prefers `python -m yt_dlp` when the yt_dlp module is installed in the
+    active interpreter (~700ms startup, zero %TEMP% unpacking) over the
+    PyInstaller one-file `bin/yt-dlp.exe` (~1,550ms unpack per call).
+    """
+    global _HAS_YTDLP_MOD
+    if _HAS_YTDLP_MOD is None:
+        _HAS_YTDLP_MOD = importlib.util.find_spec("yt_dlp") is not None
+    if _HAS_YTDLP_MOD and sys.executable:
+        return [sys.executable, "-m", "yt_dlp"]
+    if YTDLP_EXE.exists():
+        return [str(YTDLP_EXE)]
+    return ["yt-dlp"]
 
 # Ensure binary paths are appended to PATH so bundled binaries are found
 for _p in [str(BIN_DIR), str(BASE_DIR), str(MODULE_DIR)]:
@@ -83,6 +113,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "sponsorblock": False,              # Auto-skip sponsored YouTube segments
     "media_filter_only": True,          # Filter clipboard to only known media domains/extensions
     "max_concurrent_downloads": 2,      # Multi-worker parallel downloads (1 to 5)
+    "stall_timeout": 300,               # Kill downloads with no output for this many seconds (0 = disabled)
     "use_download_archive": True,       # Auto-skip already downloaded media in playlists
     "codec_preference": "auto",         # 'auto', 'compatibility' (H.264/AAC), 'quality' (AV1/VP9)
     "music_engine_provider": "ytm",     # 'ytm' (YouTube Music clean studio) or 'yt' (Standard YouTube)
@@ -90,6 +121,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "audio_loudness_norm": False,       # EBU R128 audio normalization (-af loudnorm) for audio extraction
     "download_lyrics": False,           # Auto-fetch synchronized .lrc lyrics for Spotify/music downloads
     "web_port": 8484,                   # Port for optional local web dashboard
+    "use_rust_core": True,              # Enable native PyO3 Rust core acceleration when compiled
+    "rust_hls_turbo": True,             # Enable zero-fragment-file Tokio HTTP/2 HLS (.m3u8) downloader
 }
 
 

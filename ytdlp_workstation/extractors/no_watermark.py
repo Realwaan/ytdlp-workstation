@@ -14,6 +14,16 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple
 
+from ..engine.rust_accel import is_rust_enabled, rust_core
+
+
+def _is_urlopen_unpatched() -> bool:
+    fn = urllib.request.urlopen
+    return (
+        getattr(fn, "__module__", "") == "urllib.request"
+        and getattr(fn, "__name__", "") == "urlopen"
+    )
+
 
 USER_AGENT_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 USER_AGENT_MOBILE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
@@ -56,20 +66,37 @@ def is_no_watermark_candidate(url: str) -> bool:
     return any(d in lower for d in WATERMARK_DOMAINS)
 
 
-def follow_redirects(url: str, timeout: float = 6.0) -> str:
+def follow_redirects(url: str, timeout: float = 5.0) -> str:
     """Follow HTTP 301/302 shortlinks (e.g. vt.tiktok.com, v.douyin.com, xhslink.com) to final destination."""
+    lower = (url or "").lower()
+    if any(p in lower for p in ("/video/", "/template-detail/", "/explore/", "/note/")):
+        return url
+    if is_rust_enabled() and rust_core is not None and _is_urlopen_unpatched() and hasattr(rust_core, "follow_redirects"):
+        return str(rust_core.follow_redirects(url, float(timeout)))
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT_DESKTOP})
+        req = urllib.request.Request(
+            url, headers={"User-Agent": USER_AGENT_DESKTOP}, method="HEAD"
+        )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.geturl()
     except Exception:
-        return url
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": USER_AGENT_DESKTOP, "Range": "bytes=0-0"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.geturl()
+        except Exception:
+            return url
 
 
 def clean_douyin_watermark_url(url: str) -> str:
     """Rewrite Douyin video CDN URL to replace 'playwm' with 'play' for watermark removal."""
     if not url:
         return ""
+    if is_rust_enabled() and rust_core is not None and hasattr(rust_core, "clean_douyin_watermark_url"):
+        return str(rust_core.clean_douyin_watermark_url(url))
     # Douyin's watermark removal trick: replace /playwm/ with /play/
     cleaned = url.replace("/playwm/", "/play/")
     cleaned = re.sub(r'([?&])watermark=[0-9]+', '', cleaned)

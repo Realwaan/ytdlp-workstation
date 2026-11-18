@@ -21,6 +21,7 @@ from typing import Optional, Dict, Any, List
 from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.presets import PRESETS
 from ..core.database import DB
+from ..engine.rust_accel import RUST_CORE_VERSION, is_rust_enabled
 from ..utils.system import get_free_disk_space_gb, open_file_or_folder, reveal_in_file_manager
 from ..extractors.url_detector import clean_url, is_valid_media_url
 
@@ -512,6 +513,10 @@ HTML_PAGE = """<!DOCTYPE html>
         <span>⚙️ Concurrency:</span>
         <strong id="worker-count">--</strong>
       </div>
+      <div class="badge-pill" id="badge-rust">
+        <span>🦀 Engine:</span>
+        <strong id="rust-status">--</strong>
+      </div>
       <div class="badge-pill" id="badge-status">
         <div class="live-dot"></div>
         <span>Online</span>
@@ -657,6 +662,10 @@ HTML_PAGE = """<!DOCTYPE html>
       if (data.system) {
         document.getElementById('disk-space').innerText = data.system.free_disk_gb + ' GB';
         document.getElementById('worker-count').innerText = data.system.max_workers;
+        const rustEl = document.getElementById('rust-status');
+        if (rustEl) {
+          rustEl.innerText = data.system.rust_core ? ('Rust v' + (data.system.rust_version || '0.2')) : 'Python';
+        }
       }
 
       // Update Active Downloads
@@ -826,6 +835,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "max_workers": state.config.get("max_concurrent_downloads", 2),
                 "loudness_norm": state.config.get("audio_loudness_norm", False),
                 "lyrics": state.config.get("download_lyrics", False),
+                "rust_core": is_rust_enabled(),
+                "rust_version": RUST_CORE_VERSION,
+                "rust_hls_turbo": bool(state.config.get("rust_hls_turbo", True)),
             }
 
             self._send_json_response({

@@ -1,6 +1,8 @@
 """Tests for Queue Manager and Concurrency."""
 
 import time
+from unittest.mock import patch
+
 from ytdlp_workstation.core.state import DownloadJob
 from ytdlp_workstation.queue.manager import QueueManager
 
@@ -59,4 +61,41 @@ def test_worker_concurrency_adjustment():
     qm.enqueue(job)
     assert any(e.data.get("job_id") == job.id for e in events)
 
+    qm.stop_requested = True
+
+
+def test_process_job_records_skipped_when_archive_hit():
+    """A job flagged was_archive_skipped must log history as 'Skipped', not 'Success'."""
+    qm = QueueManager(max_workers=1)
+    qm.pause_queue()
+
+    job = DownloadJob(url="https://www.youtube.com/watch?v=444", display_title="Already Have It")
+    job.was_archive_skipped = True
+    job.start_time = time.time()
+    job.finish_time = time.time()
+
+    with patch("ytdlp_workstation.queue.manager.execute_download_job", return_value=True):
+        qm._process_job(job)
+
+    entries = qm.state.history_manager.get_entries(limit=5)
+    assert entries, "expected a history entry to be written"
+    assert entries[-1]["status"] == "Skipped"
+    qm.stop_requested = True
+
+
+def test_process_job_success_logs_success_when_not_skipped():
+    qm = QueueManager(max_workers=1)
+    qm.pause_queue()
+
+    job = DownloadJob(url="https://www.youtube.com/watch?v=445", display_title="Fresh Video")
+    job.saved_filename = "Fresh Video.mp4"
+    job.start_time = time.time()
+    job.finish_time = time.time()
+
+    with patch("ytdlp_workstation.queue.manager.execute_download_job", return_value=True):
+        qm._process_job(job)
+
+    entries = qm.state.history_manager.get_entries(limit=5)
+    assert entries, "expected a history entry to be written"
+    assert entries[-1]["status"] == "Success"
     qm.stop_requested = True

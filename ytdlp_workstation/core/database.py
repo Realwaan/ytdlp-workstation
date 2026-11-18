@@ -18,15 +18,27 @@ class DatabaseEngine:
     def __init__(self, db_path: Path = DB_PATH):
         self.db_path = db_path
         self._lock = threading.Lock()
+        self._conn: Optional[sqlite3.Connection] = None
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path), timeout=15.0)
-        conn.row_factory = sqlite3.Row
-        # Enable Write-Ahead Logging for high-concurrency performance
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        return conn
+        if self._conn is None:
+            conn = sqlite3.connect(str(self.db_path), timeout=15.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            # Enable Write-Ahead Logging once per connection for high-concurrency performance
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            self._conn = conn
+        return self._conn
+
+    def close(self) -> None:
+        """Close cached database connection cleanly."""
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                finally:
+                    self._conn = None
 
     def _init_db(self) -> None:
         """Create database tables and indices if they do not exist."""

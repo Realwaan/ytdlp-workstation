@@ -16,6 +16,7 @@ history.json
 archive.txt
 data/config.json
 data/history.json
+data/scratch/
 data/*.db
 data/*.db-shm
 data/*.db-wal
@@ -65,3 +66,7 @@ aria2c.exe
 build/
 dist/
 *.egg-info/
+*.pyd
+*.so
+rust_core/target/
+rust_core/dist/

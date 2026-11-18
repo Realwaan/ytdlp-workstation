@@ -20,7 +20,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
-from ..core.config import FFMPEG_EXE, YTDLP_EXE, ARIA2C_EXE, BASE_DIR, DEFAULT_DOWNLOAD_DIR
+from ..core.config import FFMPEG_EXE, YTDLP_EXE, ARIA2C_EXE, BASE_DIR, DEFAULT_DOWNLOAD_DIR, get_ytdlp_cli_prefix
 from ..core.presets import get_preset, resolve_format_sort
 from ..core.state import DownloadJob
 from ..extractors.referer import auto_detect_referer
@@ -338,10 +338,8 @@ def build_subprocess_command(
     preset = opts.pop("_preset", {})
     extra_args = opts.pop("_extra_args", [])
 
-    ytdlp_bin = str(YTDLP_EXE) if YTDLP_EXE.exists() else "yt-dlp"
-
     cmd: List[str] = [
-        ytdlp_bin,
+        *get_ytdlp_cli_prefix(),
         "--windows-filenames",
         "--no-mtime",
         "--no-part",

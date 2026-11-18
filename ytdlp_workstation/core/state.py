@@ -37,6 +37,9 @@ class DownloadJob:
     spotify_thumbnail: Optional[str] = None
     needs_quality_prompt: bool = False
 
+    # True when yt-dlp skipped this entry because it already exists in the download archive
+    was_archive_skipped: bool = False
+
     # Cancellation token (threading.Event) set when job is cancelled mid-download
     is_cancelled: threading.Event = field(default_factory=threading.Event, compare=False, repr=False)
 
@@ -53,6 +56,9 @@ class DownloadJob:
     finish_time: float = 0.0
     saved_filename: str = ""
     saved_filesize_str: str = ""
+    # Full path of the final output file when the engine knows it (avoids guessing
+    # "newest file in folder", which mis-attributes files with concurrent workers).
+    output_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
@@ -61,11 +67,15 @@ class DownloadJob:
 class AppState:
     """Thread-safe application state holder."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        config_manager: Optional[ConfigManager] = None,
+        history_manager: Optional[HistoryManager] = None,
+    ):
         from ..extractors.referer import is_valid_streaming_referer
 
-        self.config_manager = ConfigManager()
-        self.history_manager = HistoryManager()
+        self.config_manager = config_manager or ConfigManager()
+        self.history_manager = history_manager or HistoryManager()
         self.lock = threading.Lock()
         self.stop_requested = False
         self.update_available: Optional[str] = None

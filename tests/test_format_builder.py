@@ -1,6 +1,8 @@
 """Tests for Format and Options Builder."""
 
 from pathlib import Path
+from unittest.mock import patch
+
 from ytdlp_workstation.core.state import DownloadJob
 from ytdlp_workstation.engine.format_builder import (
     build_native_ytdlp_opts,
@@ -76,8 +78,15 @@ def test_generic_m3u8_stream_unique_filename_and_no_archive(tmp_path):
     job2 = DownloadJob(url=url2)
     config = {"download_dir": str(tmp_path), "use_download_archive": True}
 
-    opts1, _ = build_native_ytdlp_opts(job1, config, archive_path=arch_file)
-    opts2, _ = build_native_ytdlp_opts(job2, config, archive_path=arch_file)
+    # detect_stream_title performs live HTTP requests; mock it so the test is
+    # deterministic offline AND online (a parked/wildcard DNS would otherwise
+    # return the same title for both URLs and collapse the filename uniqueness).
+    with patch(
+        "ytdlp_workstation.engine.format_builder.detect_stream_title",
+        return_value=None,
+    ):
+        opts1, _ = build_native_ytdlp_opts(job1, config, archive_path=arch_file)
+        opts2, _ = build_native_ytdlp_opts(job2, config, archive_path=arch_file)
 
     assert "download_archive" not in opts1
     assert "download_archive" not in opts2

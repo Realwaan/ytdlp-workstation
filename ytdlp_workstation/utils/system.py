@@ -5,6 +5,7 @@ System operations: Disk space metrics, file cleanup, console title, and dependen
 import os
 import sys
 import re
+import time
 import shutil
 import ctypes
 import subprocess
@@ -21,12 +22,25 @@ def sanitize_filename(name: str) -> str:
     return name.strip() or "Untitled"
 
 
-def cleanup_orphaned_fragments(directory: Path = None) -> None:
-    """Clean up dangling *-Frag* and *.part files from interrupted downloads."""
+def cleanup_orphaned_fragments(directory: Path = None, for_job: str = None) -> None:
+    """Clean up dangling *-Frag* files from interrupted downloads.
+
+    Fragments belonging to other still-active jobs (claimed in the fragment
+    registry) are left alone so a failing worker can't wipe a sibling's download.
+    """
+    from ..engine.fragment_registry import claimed_by_others, fragment_base
+    from ..engine.rust_accel import is_rust_enabled, rust_core
+
     try:
         target_dir = Path(directory or DEFAULT_DOWNLOAD_DIR)
         if target_dir.exists():
+            protected = claimed_by_others(for_job)
+            if is_rust_enabled() and rust_core is not None and hasattr(rust_core, "cleanup_orphaned_fragments"):
+                rust_core.cleanup_orphaned_fragments(str(target_dir), list(protected))
+                return
             for f in target_dir.glob("*-Frag*"):
+                if protected and fragment_base(f.name) in protected:
+                    continue
                 try:
                     f.unlink(missing_ok=True)
                 except Exception:
@@ -47,18 +61,28 @@ def get_free_disk_space_gb(directory: Path = None) -> float:
         return -1.0
 
 
-def set_console_title(title: str) -> None:
-    """Update Windows console title bar."""
+_last_title = ""
+_last_title_ts = 0.0
+
+
+def set_console_title(title: str, force: bool = False) -> None:
+    """Update Windows console title bar (throttled to ~10 Hz unless forced)."""
+    global _last_title, _last_title_ts
     if os.name == "nt":
+        now = time.monotonic()
+        if not force and (title == _last_title or (now - _last_title_ts) < 0.10):
+            return
         try:
             ctypes.windll.kernel32.SetConsoleTitleW(title)
+            _last_title = title
+            _last_title_ts = now
         except Exception:
             pass
 
 
 def reset_console_title() -> None:
     """Reset console title to default workstation title."""
-    set_console_title("★ YT-DLP Supercharged Workstation ★")
+    set_console_title("★ YT-DLP Supercharged Workstation ★", force=True)
 
 
 def open_file_or_folder(target: Any) -> bool:

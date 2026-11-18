@@ -123,6 +123,9 @@ Type these commands directly at the `>>> ` prompt anytime:
 | `d` or `dir` | Change downloads folder destination |
 | `h` or `history` [clear] | View recent download history (or `h clear` to reset) |
 | `nowm <URL>` | Download clean unwatermarked video directly (TikTok, Douyin, CapCut) |
+| `rank <#> [URL]` | YouTube Automation: download clean unwatermarked clip as `<#>.mp4` directly into `E:\YTAutomationFiles\src` |
+| `<number>` *(e.g. `6`)* | Quick rank: type number directly at `>>> ` prompt to grab clipboard link and save as `6.mp4` |
+| `rank list` / `rank dir` | View current ranked clips or inspect target automation folder |
 | `sniff <URL>` | Sniff arbitrary webpage for embedded video streams (.m3u8/.mpd/.mp4) |
 | `clean <1..N> [delogo/crop]` | Remove corner watermark (delogo) or crop banner from video |
 | `norm [on/off/toggle]` | EBU R128 international broadcast audio loudness normalization (-16 LUFS) |
@@ -131,10 +134,21 @@ Type these commands directly at the `>>> ` prompt anytime:
 | `sub <list/add/toggle/check>` | Automated channel subscriptions & background upload monitor |
 | `webhook <list/add/test>` | Discord and HTTP JSON webhook completion notifications |
 | `batch <file.txt>` | Import multi-line text file of URLs and enqueue downloads |
+| `rust [status/bench/on/off]` | Inspect, live-benchmark, or toggle the native PyO3 Rust acceleration engine (`ytdlp_rust_core`) |
 | `s` or `settings` | Full interactive settings menu |
 | `u` or `update` | Run `yt-dlp -U` to update yt-dlp to latest version |
 | `cls` or `clear` | Clear screen and reprint status dashboard |
 | `q` or `exit` | Exit the terminal |
+
+---
+
+## 🦀 Native Rust Performance Core (`ytdlp_rust_core`)
+
+The workstation includes an optional native Rust PyO3 extension (`rust_core/`) with an automatic pure-Python fallback:
+- **Tokio HTTP/2 HLS (`.m3u8`) Turbo Engine**: Streams VOD HLS segments concurrently over pooled HTTP/2 sockets directly into a single coalesced file (zero `*-Frag<N>` disk churn), delegating encrypted or multi-audio manifests transparently to `yt-dlp`.
+- **64 KiB Buffered MP4 Box Walker & 16 MiB Coalesced Stitcher**: Walks 32/64-bit ISO BMFF (`ftyp`/`moov`/`mdat`) headers and merges fragments outside Python's GIL with Windows `FILE_FLAG_SEQUENTIAL_SCAN` read-ahead hints.
+- **Linear-Time DFA URL, Archive & Telemetry Parsers**: Accelerates batch URL sanitization, HTML/JSON-LD stream sniffing, `archive.txt` indexing, and `yt-dlp`/`aria2c` progress parsing by **15–30x**.
+- **Local Rebuild & Live Benchmark**: Run `scripts\build_rust.bat` locally to compile the `abi3` wheel, or type `rust bench` inside the workstation terminal to benchmark Rust vs. Python on your hardware.
 
 ---
 

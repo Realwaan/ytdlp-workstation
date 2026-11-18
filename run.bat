@@ -27,20 +27,27 @@ echo.
 echo [0/5] Detecting Python environment...
 set "PYTHON_EXE="
 
-python -c "import sys; assert sys.version_info >= (3, 8)" >nul 2>&1
+where python >nul 2>&1
 if !errorlevel! equ 0 (
-    set "PYTHON_EXE=python"
-    echo   %OK% Found python (PATH)
-) else (
+    python -c "import sys; assert sys.version_info >= (3, 8)" >nul 2>&1
+    if !errorlevel! equ 0 (
+        set "PYTHON_EXE=python"
+        echo   %OK% Found python ^(PATH^)
+        goto :python_detected
+    )
+)
+where py >nul 2>&1
+if !errorlevel! equ 0 (
     py -c "import sys; assert sys.version_info >= (3, 8)" >nul 2>&1
     if !errorlevel! equ 0 (
         set "PYTHON_EXE=py"
         echo   %OK% Found py launcher
-    ) else (
-        echo   %X% Python 3.8+ not detected - will auto-install
-        set "NEED_SETUP=1"
+        goto :python_detected
     )
 )
+echo   %X% Python 3.8+ not detected - will auto-install
+set "NEED_SETUP=1"
+:python_detected
 
 :: STEP 1: Ensure bin/ is on PATH
 echo [1/5] Preparing runtime PATH...

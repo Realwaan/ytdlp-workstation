@@ -16,6 +16,7 @@ from ..core.presets import get_preset
 from ..core.events import BUS, EventType
 from ..engine.native_engine import execute_download_job
 from ..engine.fragment_merger import find_fragment_groups, merge_fragment_group
+from ..engine.process_supervisor import SUPERVISOR
 from ..extractors.spotify import embed_cover_art_ffmpeg
 from ..extractors.lyrics import fetch_and_save_lyrics_for_media
 from ..utils.notifications import play_sound, send_windows_toast
@@ -28,6 +29,7 @@ class QueueManager:
         self.state = state or STATE
         self.max_workers = max(1, min(5, max_workers))
         self.lock = threading.Lock()
+        self._wake = threading.Condition(self.lock)
         self.pending_queue: collections.deque[DownloadJob] = collections.deque()
         self.active_jobs: Dict[str, DownloadJob] = {}
         self.completed_jobs: List[DownloadJob] = []
@@ -67,6 +69,8 @@ class QueueManager:
                 ):
                     job = self.pending_queue.popleft()
                     self.active_jobs[job.id] = job
+                else:
+                    self._wake.wait(timeout=0.5)
 
             if job:
                 BUS.publish(EventType.JOB_STARTED, {"job_id": job.id, "url": job.url})
@@ -75,8 +79,9 @@ class QueueManager:
                     if job.id in self.active_jobs:
                         del self.active_jobs[job.id]
                     self.completed_jobs.append(job)
-            else:
-                time.sleep(0.1)
+                    if len(self.completed_jobs) > 200:
+                        del self.completed_jobs[:-200]
+                    self._wake.notify_all()
 
     def _process_job(self, job: DownloadJob):
         """Execute job and invoke post-download lifecycle hooks."""
@@ -102,7 +107,7 @@ class QueueManager:
         # Post-download folder check: if any *-Frag* files remain in the target directory,
         # automatically stitch and remux them into the final MP4 with live progress.
         if not job.is_cancelled.is_set():
-            frag_groups = find_fragment_groups(Path(effective_target))
+            frag_groups = find_fragment_groups(Path(effective_target), for_job=job.id)
             if frag_groups:
                 for base_name, frags in frag_groups.items():
                     merged_path = merge_fragment_group(
@@ -115,24 +120,42 @@ class QueueManager:
                     )
                     if merged_path and merged_path.exists():
                         job.saved_filename = merged_path.name
-                        job. finish_time = time.time()
+                        job.output_path = str(merged_path)
+                        job.finish_time = time.time()
                         success = True
 
         duration = round(job.finish_time - job.start_time, 1) if job.finish_time and job.start_time else 0.0
 
-        if success:
+        if success and job.was_archive_skipped:
+            # Archive skip: yt-dlp found this media already recorded; nothing new was produced.
+            saved_name = job.saved_filename or job.display_title or Path(job.url).stem
+            job.saved_filename = saved_name
+            play_sound("notice", enabled=config.get("sound_effects", True))
+            send_windows_toast(
+                "Already Downloaded",
+                f"{saved_name} was skipped (already in archive)",
+                enabled=config.get("desktop_notifications", True),
+            )
+            entry = {
+                "id": job.id,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "url": job.url,
+                "title": saved_name,
+                "preset": preset_name,
+                "status": "Skipped",
+                "progress": 100.0,
+                "duration": f"{duration}s",
+                "size": job.saved_filesize_str,
+                "target_dir": str(effective_target),
+            }
+            self.state.history_manager.add_entry(entry)
+            BUS.publish(EventType.JOB_FINISHED, entry)
+        elif success:
+            target_path = Path(effective_target)
             # Embed Spotify cover artwork if provided
             if job.spotify_thumbnail:
                 try:
-                    mp3_target = None
-                    if job.custom_output_template and job.custom_output_template.endswith(".%(ext)s"):
-                        cand = Path(job.custom_output_template.replace(".%(ext)s", ".mp3"))
-                        if cand.exists():
-                            mp3_target = cand
-                    if not mp3_target:
-                        recent = sorted(Path(effective_target).glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
-                        if recent and (time.time() - recent[0].stat().st_mtime) < 60:
-                            mp3_target = recent[0]
+                    mp3_target = self._resolve_output_file(job, target_path, exts=(".mp3",))
                     if mp3_target and mp3_target.exists():
                         embed_cover_art_ffmpeg(mp3_target, job.spotify_thumbnail)
                 except Exception:
@@ -149,21 +172,9 @@ class QueueManager:
                         artist = parts[0].strip()
                         title = parts[1].strip()
                     if artist and title:
-                        audio_cand = None
-                        if job.custom_output_template and job.custom_output_template.endswith(".%(ext)s"):
-                            for ext in (".mp3", ".flac", ".m4a", ".opus", ".wav"):
-                                c = Path(job.custom_output_template.replace(".%(ext)s", ext))
-                                if c.exists():
-                                    audio_cand = c
-                                    break
-                        if not audio_cand:
-                            recent_audio = sorted(
-                                [p for p in Path(effective_target).glob("*") if p.suffix.lower() in (".mp3", ".flac", ".m4a", ".opus", ".wav")],
-                                key=lambda p: p.stat().st_mtime,
-                                reverse=True
-                            )
-                            if recent_audio and (time.time() - recent_audio[0].stat().st_mtime) < 60:
-                                audio_cand = recent_audio[0]
+                        audio_cand = self._resolve_output_file(
+                            job, target_path, exts=(".mp3", ".flac", ".m4a", ".opus", ".wav")
+                        )
                         if audio_cand and audio_cand.exists():
                             fetch_and_save_lyrics_for_media(
                                 audio_cand,
@@ -177,14 +188,10 @@ class QueueManager:
             # Detect saved filename and size
             saved_name = job.saved_filename or job.display_title or Path(job.url).stem
             try:
-                recent_files = sorted(
-                    [p for p in Path(effective_target).glob("*") if p.is_file() and not p.name.endswith(".part")],
-                    key=lambda p: p.stat().st_mtime,
-                    reverse=True
-                )
-                if recent_files and (time.time() - recent_files[0].stat().st_mtime) < 120:
-                    saved_name = recent_files[0].name
-                    b = recent_files[0].stat().st_size
+                final_file = self._resolve_output_file(job, target_path)
+                if final_file and final_file.exists():
+                    saved_name = final_file.name
+                    b = final_file.stat().st_size
                     if b >= 1024**3:
                         job.saved_filesize_str = f"{b / (1024**3):.2f} GB"
                     elif b >= 1024**2:
@@ -238,6 +245,53 @@ class QueueManager:
         if self.on_job_finished:
             self.on_job_finished(job, success)
 
+    @staticmethod
+    def _resolve_output_file(
+        job: DownloadJob,
+        effective_target: Path,
+        exts: Optional[tuple] = None,
+    ) -> Optional[Path]:
+        """Resolve the output media file produced by this job.
+
+        Prefers explicit per-job paths recorded by the engine before falling
+        back to a newest-file directory scan (which can mis-attribute files when
+        multiple workers finish concurrently in the same directory).
+        """
+        ext_set = tuple(e.lower() for e in exts) if exts else None
+
+        if job.output_path:
+            cand = Path(job.output_path)
+            if cand.is_file() and (not ext_set or cand.suffix.lower() in ext_set):
+                return cand
+
+        if job.custom_output_template and job.custom_output_template.endswith(".%(ext)s"):
+            check_exts = ext_set or (".mp4", ".mkv", ".webm", ".mp3", ".m4a", ".flac", ".opus", ".wav")
+            for ext in check_exts:
+                cand = Path(job.custom_output_template.replace(".%(ext)s", ext))
+                if cand.is_file():
+                    return cand
+
+        if job.saved_filename:
+            cand = effective_target / job.saved_filename
+            if cand.is_file() and (not ext_set or cand.suffix.lower() in ext_set):
+                return cand
+
+        if not effective_target.exists():
+            return None
+
+        cutoff = 60 if ext_set else 120
+        candidates = [
+            p for p in effective_target.glob("*")
+            if p.is_file()
+            and not p.name.endswith(".part")
+            and (not ext_set or p.suffix.lower() in ext_set)
+        ]
+        if candidates:
+            recent = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
+            if (time.time() - recent[0].stat().st_mtime) < cutoff:
+                return recent[0]
+        return None
+
     def _handle_progress(self, job: DownloadJob):
         BUS.publish(
             EventType.JOB_PROGRESS,
@@ -256,6 +310,7 @@ class QueueManager:
         """Enqueue a new download task."""
         with self.lock:
             self.pending_queue.append(job)
+            self._wake.notify_all()
         BUS.publish(EventType.JOB_ENQUEUED, {"job_id": job.id, "url": job.url})
         return job.id
 
@@ -269,6 +324,7 @@ class QueueManager:
         """Resume processing of pending tasks."""
         with self.lock:
             self.is_paused = False
+            self._wake.notify_all()
         BUS.publish(EventType.JOB_RESUMED, {})
 
     def resolve_job(self, target: str) -> Optional[DownloadJob]:
@@ -288,6 +344,9 @@ class QueueManager:
     def cancel_job(self, target: str) -> bool:
         """Cancel a pending or active job by 1-based index or ID."""
         target = target.strip()
+        active_to_kill: Optional[str] = None
+        cancelled_event_data: Optional[Dict[str, str]] = None
+
         with self.lock:
             ordered = list(self.active_jobs.values()) + list(self.pending_queue)
             target_job = None
@@ -307,33 +366,44 @@ class QueueManager:
                 self.pending_queue.remove(target_job)
                 target_job.status = "CANCELLED"
                 self.completed_jobs.append(target_job)
-                BUS.publish(EventType.JOB_CANCELLED, {"job_id": target_job.id, "url": target_job.url})
-                return True
-
-            if target_job.id in self.active_jobs:
+                cancelled_event_data = {"job_id": target_job.id, "url": target_job.url}
+            elif target_job.id in self.active_jobs:
                 target_job.is_cancelled.set()
                 target_job.status = "CANCELLING"
-                BUS.publish(EventType.JOB_CANCELLED, {"job_id": target_job.id, "url": target_job.url})
-                return True
+                active_to_kill = target_job.id
+                cancelled_event_data = {"job_id": target_job.id, "url": target_job.url}
+
+        if cancelled_event_data:
+            BUS.publish(EventType.JOB_CANCELLED, cancelled_event_data)
+            if active_to_kill:
+                SUPERVISOR.kill_job_process(active_to_kill)
+            return True
 
         return False
 
     def cancel_all(self) -> int:
         """Cancel all pending and active jobs."""
+        active_to_kill: List[str] = []
+        cancelled_events: List[Dict[str, str]] = []
         with self.lock:
             count = 0
             for job in list(self.pending_queue):
                 self.pending_queue.remove(job)
                 job.status = "CANCELLED"
                 self.completed_jobs.append(job)
-                BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
+                cancelled_events.append({"job_id": job.id, "url": job.url})
                 count += 1
             for job in list(self.active_jobs.values()):
                 job.is_cancelled.set()
                 job.status = "CANCELLING"
-                BUS.publish(EventType.JOB_CANCELLED, {"job_id": job.id, "url": job.url})
+                active_to_kill.append(job.id)
+                cancelled_events.append({"job_id": job.id, "url": job.url})
                 count += 1
-            return count
+        for ev_data in cancelled_events:
+            BUS.publish(EventType.JOB_CANCELLED, ev_data)
+        for jid in active_to_kill:
+            SUPERVISOR.kill_job_process(jid)
+        return count
 
     def get_active_jobs(self) -> List[DownloadJob]:
         """Return a copy of currently active jobs."""
@@ -368,6 +438,8 @@ class QueueManager:
     def set_max_workers(self, n: int):
         """Update worker concurrency cap and dynamically scale worker pool."""
         n = max(1, min(5, n))
-        self.max_workers = n
+        with self.lock:
+            self.max_workers = n
+            self._wake.notify_all()
         self.state.set_config("max_concurrent_downloads", n)
         self._ensure_workers()

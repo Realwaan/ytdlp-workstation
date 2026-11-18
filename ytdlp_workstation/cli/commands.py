@@ -11,21 +11,39 @@ from pathlib import Path
 from typing import Optional
 
 from ..core.state import DownloadJob, AppState, resolve_state
-from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
+from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR, get_ytdlp_cli_prefix
 from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..core.database import DB
 from ..core.webhooks import WEBHOOK_DISPATCHER
 from ..queue.subscription_scheduler import SubscriptionScheduler
-from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX, clean_url
+from ..extractors.url_detector import (
+    is_valid_media_url,
+    extract_media_url,
+    GENERIC_URL_REGEX,
+    clean_url,
+    clean_urls_batch,
+    filter_valid_media_urls_batch,
+)
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
 from ..extractors.title_detector import detect_stream_title
 from ..extractors.spotify import is_spotify_url, resolve_spotify_url, build_music_search_query
 from ..extractors.no_watermark import resolve_no_watermark_media
-from ..extractors.web_sniffer import sniff_web_media
+from ..extractors.web_sniffer import sniff_web_media, sniff_webpages_batch, extract_all_media_from_html
+from ..engine.rust_accel import (
+    HAS_RUST_CORE,
+    RUST_CORE_VERSION,
+    is_rust_enabled,
+    set_rust_enabled,
+    get_rust_capabilities,
+    force_python_fallback,
+    rust_core,
+)
 from ..engine.watermark_remover import clean_video
 from ..extractors.lyrics import fetch_lyrics, search_lyrics, save_lrc_file
 from ..web.server import start_dashboard_server, get_dashboard_server
 from ..utils.system import sanitize_filename, open_file_or_folder, reveal_in_file_manager
+from ..utils.clipboard import get_clipboard_text
+from ..utils.notifications import play_sound
 from .ui import Fore, Style, print_banner
 from .input_reader import read_single_choice, prompt_video_quality, inspect_and_pick_formats, ask_text
 
@@ -391,7 +409,7 @@ def cmd_search(raw: str, queue_mgr, state: Optional[AppState] = None):
 
     print(f"\n{Fore.CYAN}[🔍] Searching YouTube for:{Style.RESET_ALL} {Fore.WHITE}\"{query}\"...{Style.RESET_ALL}")
     cmd = [
-        str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
+        *get_ytdlp_cli_prefix(),
         "--dump-json",
         "--flat-playlist",
         "--default-search", "ytsearch5",
@@ -472,7 +490,7 @@ def cmd_inspect(raw: str, queue_mgr, state: Optional[AppState] = None):
     print(f"\n{Fore.CYAN}[*] Fetching metadata for:{Style.RESET_ALL} {Fore.WHITE}{url}...{Style.RESET_ALL}")
 
     cmd = [
-        str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
+        *get_ytdlp_cli_prefix(),
         "--dump-single-json",
         "--no-playlist",
     ]
@@ -560,9 +578,7 @@ def cmd_archive_management(raw: str, state: Optional[AppState] = None):
     archive_file = state.history_manager.archive_file
     if len(parts) > 1 and parts[1].lower() in ("clear", "reset"):
         try:
-            if archive_file.exists():
-                archive_file.unlink()
-            state.history_manager._archive_cache.clear()
+            state.history_manager.clear_archive()
             print(f"\n{Fore.GREEN}[✓] Download archive cleared!{Style.RESET_ALL}\n")
         except Exception as e:
             print(f"{Fore.RED}[!] Could not clear archive: {e}{Style.RESET_ALL}\n")
@@ -570,7 +586,7 @@ def cmd_archive_management(raw: str, state: Optional[AppState] = None):
 
     print(f"\n{Fore.CYAN}═══ 💾 DOWNLOAD ARCHIVE TRACKER ═══{Style.RESET_ALL}")
     print(f"File: {Fore.YELLOW}{archive_file}{Style.RESET_ALL}")
-    count = len(state.history_manager._archive_cache)
+    count = state.history_manager.get_archive_count()
     print(f"Total Archived Video IDs: {Fore.GREEN}{count} items{Style.RESET_ALL}")
     status = "ACTIVE (Duplicate downloads are instantly skipped)" if state.config.get("use_download_archive", True) else "OFF"
     print(f"Status: {Fore.GREEN if state.config.get('use_download_archive', True) else Fore.RED}{status}{Style.RESET_ALL}")
@@ -688,6 +704,26 @@ def cmd_sniff(raw: str, queue_mgr, state: Optional[AppState] = None):
         url_in = ask_text(f"{Fore.WHITE}Enter webpage URL to sniff >>> {Style.RESET_ALL}", state).strip("\"'")
 
     if not url_in:
+        return
+
+    candidate_tokens = [tok.strip("\"'") for tok in url_in.split() if tok.strip("\"'").startswith(("http://", "https://"))]
+    if len(candidate_tokens) > 1:
+        print(f"\n{Fore.CYAN}[🔎] Sniffing {len(candidate_tokens)} webpages in parallel...{Style.RESET_ALL}")
+        batch_results = sniff_webpages_batch(candidate_tokens)
+        queued = 0
+        for src_url, found in zip(candidate_tokens, batch_results):
+            if found:
+                job = DownloadJob(
+                    url=found.url,
+                    referer=found.referer or src_url,
+                    display_title=found.title,
+                )
+                queue_mgr.enqueue(job)
+                queued += 1
+                print(f"  {Fore.GREEN}[✓]{Style.RESET_ALL} {found.title[:50]} -> {Fore.CYAN}{found.url[:65]}...{Style.RESET_ALL}")
+            else:
+                print(f"  {Fore.YELLOW}[!]{Style.RESET_ALL} No stream found on {src_url}")
+        print(f"\n{Fore.GREEN}[+] Queued {queued}/{len(candidate_tokens)} sniffed stream(s).{Style.RESET_ALL}\n")
         return
 
     url = extract_media_url(url_in) or url_in
@@ -905,16 +941,10 @@ def cmd_batch(raw: str, queue_mgr, state: Optional[AppState] = None):
             lines = f.readlines()
 
         print(f"\n{Fore.CYAN}[⚡] Importing batch download list from {filepath.name}...{Style.RESET_ALL}")
-        for raw_line in lines:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            cleaned = clean_url(line)
-            if is_valid_media_url(cleaned) or cleaned.startswith(("http://", "https://")):
-                job = DownloadJob(url=cleaned)
-                queue_mgr.enqueue(job)
-                enqueued_count += 1
+        for valid_url in filter_valid_media_urls_batch(lines, media_filter_only=False):
+            job = DownloadJob(url=valid_url)
+            queue_mgr.enqueue(job)
+            enqueued_count += 1
 
         print(f"{Fore.GREEN}[✓] Successfully enqueued {enqueued_count} task(s) from {filepath.name}!{Style.RESET_ALL}\n")
     except Exception as e:
@@ -1025,6 +1055,345 @@ def cmd_dashboard(raw: str, queue_mgr, state: Optional[AppState] = None):
             print(f"{Fore.GREEN}[✓] Web Dashboard live at:{Style.RESET_ALL} {Fore.CYAN}http://127.0.0.1:{server.port}{Style.RESET_ALL}\n")
         else:
             print(f"{Fore.RED}[!] Failed to bind Web Dashboard server.{Style.RESET_ALL}\n")
+
+
+def get_next_rank_number(target_dir: Path, queue_mgr=None) -> int:
+    """Scan target directory (and in-flight queue jobs) for the next integer rank number."""
+    import re
+    existing_nums = []
+    if target_dir.exists():
+        for f in target_dir.iterdir():
+            if f.is_file():
+                stem = f.stem.strip()
+                if stem.isdigit():
+                    existing_nums.append(int(stem))
+                else:
+                    m = re.match(r"^(\d+)", stem)
+                    if m:
+                        existing_nums.append(int(m.group(1)))
+
+    if queue_mgr is not None:
+        try:
+            target_resolved = str(Path(target_dir).resolve())
+            in_flight = []
+            if hasattr(queue_mgr, "get_active_jobs"):
+                in_flight.extend(queue_mgr.get_active_jobs() or [])
+            if hasattr(queue_mgr, "get_queued_jobs"):
+                in_flight.extend(queue_mgr.get_queued_jobs() or [])
+            for j in in_flight:
+                j_dir = getattr(j, "target_dir", None)
+                tmpl = getattr(j, "custom_output_template", None)
+                if not isinstance(j_dir, (str, Path)) or not isinstance(tmpl, str) or not tmpl:
+                    continue
+                if str(Path(j_dir).resolve()) == target_resolved:
+                    stem = Path(tmpl).stem.strip()
+                    if stem.isdigit():
+                        existing_nums.append(int(stem))
+                    else:
+                        m = re.match(r"^(\d+)", stem)
+                        if m:
+                            existing_nums.append(int(m.group(1)))
+        except Exception:
+            pass
+
+    return max(existing_nums) + 1 if existing_nums else 1
+
+
+def cmd_rank(raw: str, queue_mgr, state: Optional[AppState] = None):
+    """
+    Dedicated YouTube Automation Ranking Downloader.
+    Downloads unwatermarked video directly as <number>.mp4 into target folder (default: E:\\YTAutomationFiles\\src).
+    
+    Syntax:
+        rank <number> [URL]    -> Download specific rank number (e.g. 'rank 6' or 'rank 6 https://...')
+        rank [URL]             -> Auto-detect next number and download
+        rank                   -> Auto-detect next number from folder and clipboard
+        rank dir <folder>      -> View or update target ranking folder
+        rank list / status     -> View current ranked clips in the folder
+        <number> [URL]         -> Pure number typed directly at prompt (e.g. '6' or '6 https://...')
+    """
+    state = _resolve_state(state)
+    target_dir = Path(state.config.get("rank_download_dir", r"E:\YTAutomationFiles\src"))
+
+    raw_stripped = raw.strip()
+    tokens = raw_stripped.split()
+    if not tokens:
+        return
+
+    first_word = tokens[0].lower()
+    rest = raw_stripped[len(tokens[0]):].strip()
+
+    # Subcommand: rank dir <path>
+    if first_word in ("rank", "ranking", "top") and len(tokens) >= 2 and tokens[1].lower() in ("dir", "folder", "path"):
+        if len(tokens) >= 3:
+            new_dir = Path(" ".join(tokens[2:]).strip("\"'"))
+            new_dir.mkdir(parents=True, exist_ok=True)
+            state.set_config("rank_download_dir", str(new_dir.resolve()))
+            print(f"{Fore.GREEN}[✓] YouTube Automation destination updated to:{Style.RESET_ALL} {Fore.CYAN}{new_dir}{Style.RESET_ALL}\n")
+        else:
+            print(f"\n{Fore.CYAN}Current YouTube Automation ranking destination:{Style.RESET_ALL} {Fore.WHITE}{target_dir}{Style.RESET_ALL}\n")
+        return
+
+    # Subcommand: rank list / status / ls
+    if first_word in ("rank", "ranking", "top") and len(tokens) >= 2 and tokens[1].lower() in ("list", "status", "ls", "files"):
+        print(f"\n{Fore.CYAN}═══ 🎬 YT AUTOMATION RANKING FILES ═══{Style.RESET_ALL}")
+        print(f"  {Fore.WHITE}Target Folder:{Style.RESET_ALL} {Fore.CYAN}{target_dir}{Style.RESET_ALL}")
+        if target_dir.exists():
+            files = sorted(
+                [f for f in target_dir.iterdir() if f.is_file() and f.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm")],
+                key=lambda x: (int(x.stem) if x.stem.isdigit() else 999999, x.name)
+            )
+            if files:
+                print(f"  {Fore.GREEN}Found {len(files)} ranked clip(s):{Style.RESET_ALL}")
+                for f in files:
+                    sz_mb = f.stat().st_size / (1024 * 1024)
+                    print(f"    • {Fore.LIGHTGREEN_EX}{f.name:<12}{Style.RESET_ALL} ({sz_mb:.1f} MB)")
+            else:
+                print(f"  {Fore.YELLOW}No clips found yet in this folder.{Style.RESET_ALL}")
+        else:
+            print(f"  {Fore.YELLOW}Target folder does not exist yet (will be auto-created on first download).{Style.RESET_ALL}")
+        next_slot = get_next_rank_number(target_dir, queue_mgr=queue_mgr)
+        print(f"\n  {Fore.GREEN}[⚡] Next incremental slot:{Style.RESET_ALL} {Fore.LIGHTYELLOW_EX}#{next_slot}{Style.RESET_ALL}\n")
+        return
+
+    # Determine rank number and URL
+    rank_num: Optional[int] = None
+    url: Optional[str] = None
+
+    if first_word in ("rank", "ranking", "top"):
+        if len(tokens) >= 2:
+            arg1 = tokens[1].lstrip("#")
+            if arg1.isdigit():
+                rank_num = int(arg1)
+                if len(tokens) >= 3:
+                    url = extract_media_url(" ".join(tokens[2:])) or " ".join(tokens[2:])
+            else:
+                # E.g. "rank https://tiktok.com/..." (omitted number)
+                url = extract_media_url(rest) or rest
+    elif first_word.lstrip("#").isdigit():
+        rank_num = int(first_word.lstrip("#"))
+        if rest:
+            url = extract_media_url(rest) or rest
+
+    # If no number specified, auto-detect the next slot
+    if rank_num is None:
+        rank_num = get_next_rank_number(target_dir, queue_mgr=queue_mgr)
+        print(f"{Fore.CYAN}[⚡] Auto-selected next available rank slot:{Style.RESET_ALL} {Fore.LIGHTYELLOW_EX}#{rank_num}{Style.RESET_ALL}")
+
+    # If no URL specified, attempt clipboard auto-detection
+    if not url:
+        try:
+            clip_text = get_clipboard_text().strip()
+        except Exception:
+            clip_text = ""
+        if clip_text and is_valid_media_url(clip_text):
+            url = extract_media_url(clip_text) or clip_text
+            print(f"{Fore.GREEN}[⚡] Auto-detected URL from clipboard:{Style.RESET_ALL} {Fore.CYAN}{url}{Style.RESET_ALL}")
+        else:
+            url_in = ask_text(f"{Fore.CYAN}🔗 Rank #{rank_num} — Paste Video / TikTok URL (or press Enter to cancel) >>> {Style.RESET_ALL}", state).strip("\"'")
+            if not url_in:
+                print(f"{Fore.YELLOW}[!] Cancelled rank download.{Style.RESET_ALL}\n")
+                return
+            url = extract_media_url(url_in) or url_in
+
+    if not url:
+        return
+
+    # Clean URL and mark in seen_clipboard to prevent duplicate prompts
+    clean = clean_url(url)
+    with state.lock:
+        state.seen_clipboard.add(clean)
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_output_file = target_dir / f"{rank_num}.mp4"
+
+    print(f"\n{Fore.CYAN}[🔍] Resolving unwatermarked stream for Rank #{rank_num}...{Style.RESET_ALL}")
+    
+    # Try direct unwatermark resolver first
+    try:
+        media = resolve_no_watermark_media(url)
+    except Exception:
+        media = None
+
+    if media and media.direct_url:
+        direct_url = media.direct_url
+        referer = media.referer or "https://www.tiktok.com/"
+        display_title = f"Rank #{rank_num} ({media.title[:35]})" if media.title else f"Rank #{rank_num}"
+        print(f"{Fore.GREEN}[✓] Extracted clean unwatermarked stream! ({media.platform}){Style.RESET_ALL}")
+    else:
+        direct_url = url
+        referer = auto_detect_referer(url, last_seen_website=state.last_seen_website, default_referer="https://www.tiktok.com/")
+        display_title = f"Rank #{rank_num}"
+
+    out_tmpl = str(target_dir / f"{rank_num}.%(ext)s")
+
+    job = DownloadJob(
+        url=direct_url,
+        referer=referer,
+        display_title=display_title,
+        target_dir=str(target_dir),
+        custom_output_template=out_tmpl,
+        preset_override=1,  # Best Available MP4
+        force_video=True,
+        needs_quality_prompt=False,
+    )
+
+    queue_mgr.enqueue(job)
+    play_sound("notice", enabled=state.config.get("sound_effects", True))
+
+    print(
+        f"{Fore.GREEN}[✓] Queued Rank #{rank_num} -> {Fore.LIGHTGREEN_EX}{target_output_file.name}{Style.RESET_ALL}\n"
+        f"    {Fore.WHITE}Directory:{Style.RESET_ALL} {target_dir}\n"
+        f"    {Fore.WHITE}File:{Style.RESET_ALL}      {Fore.LIGHTGREEN_EX}{target_output_file}{Style.RESET_ALL}\n"
+    )
+
+
+def cmd_rust(raw: str, state: Optional[AppState] = None):
+    """Inspect, benchmark, or toggle the native PyO3 `ytdlp_rust_core` acceleration engine."""
+    import time as _time
+    import re as _re
+
+    state = _resolve_state(state)
+    tokens = raw.strip().split()
+    sub = tokens[1].lower() if len(tokens) > 1 else "status"
+
+    if sub in ("on", "enable", "1", "true"):
+        if not HAS_RUST_CORE:
+            print(f"\n{Fore.RED}[!] ytdlp_rust_core is not compiled. Run scripts\\build_rust.bat first.{Style.RESET_ALL}\n")
+            return
+        set_rust_enabled(True)
+        state.set_config("use_rust_core", True)
+        print(f"\n{Fore.GREEN}[✓] Native Rust Core acceleration is now ENABLED (v{RUST_CORE_VERSION}).{Style.RESET_ALL}\n")
+        return
+
+    if sub in ("off", "disable", "0", "false"):
+        set_rust_enabled(False)
+        state.set_config("use_rust_core", False)
+        print(f"\n{Fore.YELLOW}[✓] Native Rust Core disabled (using pure-Python fallback).{Style.RESET_ALL}\n")
+        return
+
+    if sub == "toggle":
+        if not HAS_RUST_CORE:
+            print(f"\n{Fore.RED}[!] ytdlp_rust_core is not compiled. Run scripts\\build_rust.bat first.{Style.RESET_ALL}\n")
+            return
+        new_val = not is_rust_enabled()
+        set_rust_enabled(new_val)
+        state.set_config("use_rust_core", new_val)
+        print(f"\n{Fore.GREEN}[✓] Native Rust Core is now: {'ON' if new_val else 'OFF'}{Style.RESET_ALL}\n")
+        return
+
+    if sub == "hls":
+        cur_hls = bool(state.config.get("rust_hls_turbo", True))
+        arg2 = tokens[2].lower() if len(tokens) > 2 else "toggle"
+        if arg2 in ("on", "enable", "1", "true"):
+            new_hls = True
+        elif arg2 in ("off", "disable", "0", "false"):
+            new_hls = False
+        else:
+            new_hls = not cur_hls
+        state.set_config("rust_hls_turbo", new_hls)
+        print(f"\n{Fore.GREEN}[✓] Rust Tokio HTTP/2 HLS (.m3u8) Turbo Engine is now: {'ENABLED' if new_hls else 'DISABLED'}{Style.RESET_ALL}\n")
+        return
+
+    if sub in ("bench", "benchmark", "perf"):
+        if not HAS_RUST_CORE or rust_core is None:
+            print(f"\n{Fore.RED}[!] Cannot benchmark: ytdlp_rust_core is not compiled.{Style.RESET_ALL}\n")
+            return
+
+        print(f"\n{Fore.CYAN}[⚡] Running live Rust Core v{RUST_CORE_VERSION} vs Pure-Python benchmark...{Style.RESET_ALL}")
+        prev_enabled = is_rust_enabled()
+        set_rust_enabled(True)
+        try:
+            # 1. Batch URL Sanitization + Validation (10,000 URLs)
+            sample_urls = [
+                f"https://www.youtube.com/watch?si=tok{i}&v=dQw4w9WgXcQ&utm_source=share&fbclid=fb{i}"
+                for i in range(10_000)
+            ]
+            t0 = _time.perf_counter()
+            filter_valid_media_urls_batch(sample_urls, media_filter_only=True)
+            rust_u_ms = max(0.05, (_time.perf_counter() - t0) * 1000)
+
+            with force_python_fallback():
+                t0 = _time.perf_counter()
+                filter_valid_media_urls_batch(sample_urls, media_filter_only=True)
+                py_u_ms = (_time.perf_counter() - t0) * 1000
+
+            # 2. HTML + JSON-LD Stream Sniffer (100 pages)
+            noise = "<div class='card'><p>" + ("Stream metadata block " * 30) + "</p></div>"
+            sample_html = (
+                "<html><head><title>4K Premiere - Portal</title></head><body>"
+                + (noise * 35)
+                + '<script type="application/ld+json">{"@type":"VideoObject","name":"Premiere","contentUrl":"https://cdn.example/v.m3u8"}</script>'
+                + "</body></html>"
+            )
+            t0 = _time.perf_counter()
+            for _ in range(100):
+                extract_all_media_from_html(sample_html, "https://portal.example/watch")
+            rust_h_ms = max(0.05, (_time.perf_counter() - t0) * 1000)
+
+            with force_python_fallback():
+                t0 = _time.perf_counter()
+                for _ in range(100):
+                    extract_all_media_from_html(sample_html, "https://portal.example/watch")
+                py_h_ms = (_time.perf_counter() - t0) * 1000
+
+            # 3. Archive Indexer (25,000 downloaded items)
+            import tempfile as _tempfile
+            with _tempfile.TemporaryDirectory() as _td:
+                arch_p = Path(_td) / "archive.txt"
+                arch_p.write_text(
+                    "\n".join(f"youtube vid_{i:06d}" for i in range(25_000)) + "\n",
+                    encoding="utf-8",
+                )
+                # Warm OS page cache & Defender filter once so both engines measure pure indexing speed
+                _ = arch_p.read_bytes()
+                t0 = _time.perf_counter()
+                _r_idx = rust_core.RustArchiveIndex(str(arch_p), False)
+                _ = _r_idx.is_archived("vid_024999")
+                rust_p_ms = max(0.05, (_time.perf_counter() - t0) * 1000)
+
+                t0 = _time.perf_counter()
+                cache_py = set()
+                with open(arch_p, "r", encoding="utf-8", errors="ignore") as _af:
+                    for _ln in _af:
+                        _s = _ln.strip()
+                        if _s and not _s.startswith("#") and not _s.startswith("generic "):
+                            cache_py.add(_s)
+                _idx_py = {(_e.split(maxsplit=1)[1] if " " in _e else _e): _e for _e in cache_py}
+                py_p_ms = (_time.perf_counter() - t0) * 1000
+        finally:
+            set_rust_enabled(prev_enabled)
+
+        print(f"\n{Fore.GREEN}═══ 🦀 RUST CORE LIVE BENCHMARK RESULTS ═══{Style.RESET_ALL}")
+        print(f"  {'Workload':<36} {'Python':>10} {'Rust':>10} {'Speedup':>12}")
+        print(f"  {Fore.LIGHTBLACK_EX}{'─' * 72}{Style.RESET_ALL}")
+        print(f"  {'DFA URL Clean+Validate (10k URLs)':<36} {py_u_ms:>8.1f}ms {rust_u_ms:>8.1f}ms {Fore.LIGHTGREEN_EX}{py_u_ms / rust_u_ms:>9.1f}x{Style.RESET_ALL}")
+        print(f"  {'HTML + JSON-LD Sniffer (100 pages)':<36} {py_h_ms:>8.1f}ms {rust_h_ms:>8.1f}ms {Fore.LIGHTGREEN_EX}{py_h_ms / rust_h_ms:>9.1f}x{Style.RESET_ALL}")
+        print(f"  {'Archive O(1) Indexer (25k items)':<36} {py_p_ms:>8.1f}ms {rust_p_ms:>8.1f}ms {Fore.LIGHTGREEN_EX}{py_p_ms / rust_p_ms:>9.1f}x{Style.RESET_ALL}\n")
+        return
+
+    # Default: status overview
+    active = is_rust_enabled()
+    hls_on = bool(state.config.get("rust_hls_turbo", True))
+    badge = (
+        f"{Fore.GREEN}ACTIVE (ytdlp_rust_core v{RUST_CORE_VERSION}){Style.RESET_ALL}"
+        if active
+        else (
+            f"{Fore.YELLOW}PAUSED (v{RUST_CORE_VERSION} installed — pure-Python active){Style.RESET_ALL}"
+            if HAS_RUST_CORE
+            else f"{Fore.RED}NOT COMPILED (pure-Python fallback){Style.RESET_ALL}"
+        )
+    )
+    hls_badge = f"{Fore.GREEN}ENABLED{Style.RESET_ALL}" if (active and hls_on) else f"{Fore.YELLOW}DISABLED{Style.RESET_ALL}"
+    caps = get_rust_capabilities()
+
+    print(f"\n{Fore.CYAN}═══ 🦀 NATIVE RUST ACCELERATION ENGINE ═══{Style.RESET_ALL}")
+    print(f"  {Fore.WHITE}Runtime Status :{Style.RESET_ALL} {badge}")
+    print(f"  {Fore.WHITE}HLS Turbo Mode :{Style.RESET_ALL} {hls_badge} {Fore.LIGHTBLACK_EX}(Zero-fragment HTTP/2 .m3u8 engine){Style.RESET_ALL}")
+    if caps:
+        print(f"  {Fore.WHITE}Subsystems     :{Style.RESET_ALL} {Fore.CYAN}{', '.join(caps)}{Style.RESET_ALL}")
+    print(f"\n  {Fore.LIGHTBLACK_EX}Commands: rust status | rust bench | rust on | rust off | rust hls <on|off>{Style.RESET_ALL}\n")
+
 
 
 

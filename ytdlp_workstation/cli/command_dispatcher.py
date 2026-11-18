@@ -21,7 +21,7 @@ from typing import Optional
 
 from ..core.state import STATE, DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, YTDLP_EXE
-from ..core.presets import PRESETS
+from ..core.presets import PRESETS, QUALITY_SHORTCUT_MAP
 from ..queue.manager import QueueManager
 from ..extractors.url_detector import is_valid_media_url, extract_media_url, GENERIC_URL_REGEX, clean_url
 from ..extractors.referer import auto_detect_referer, KNOWN_STREAMING_DOMAINS
@@ -50,6 +50,8 @@ from .commands import (
     cmd_norm,
     cmd_lyrics,
     cmd_dashboard,
+    cmd_rank,
+    cmd_rust,
     enqueue_spotify_download,
     enqueue_media_url,
     handle_preset_shortcut,
@@ -206,6 +208,8 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
 
     if first_word in ("play", "song", "music", "watch", "view"):
         cmd_play(raw, queue_mgr, state=state)
+    elif first_word in ("rank", "ranking", "top") or (first_word.lstrip("#").isdigit() and first_word not in QUALITY_SHORTCUT_MAP and int(first_word.lstrip("#")) < 500):
+        cmd_rank(raw, queue_mgr, state=state)
     elif first_word in ("nowm", "watermark", "cleanwm"):
         cmd_nowm(raw, queue_mgr, state=state)
     elif first_word in ("sniff", "extract"):
@@ -243,6 +247,8 @@ def handle_user_command(user_input: str, queue_mgr: QueueManager, state: Optiona
         cmd_lyrics(raw, state=state)
     elif first_word in ("dashboard", "web", "gui", "ui"):
         cmd_dashboard(raw, queue_mgr, state=state)
+    elif first_word == "rust":
+        cmd_rust(raw, state=state)
     elif first_word in ("site", "website"):
         if arg_part:
             key = arg_part.strip().lower()

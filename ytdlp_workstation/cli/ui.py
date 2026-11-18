@@ -32,6 +32,7 @@ except ImportError:
 from ..core.state import DownloadJob, AppState, resolve_state
 from ..core.config import DEFAULT_DOWNLOAD_DIR, ARIA2C_EXE
 from ..core.presets import PRESETS
+from ..engine.rust_accel import is_rust_enabled
 from ..utils.system import get_free_disk_space_gb
 from typing import Optional
 from .console import CONSOLE
@@ -75,7 +76,12 @@ def print_banner(active_workers: int = 1, state: Optional[AppState] = None):
     free_gb = get_free_disk_space_gb(download_folder)
     disk_badge = f"{free_gb} GB Free" if free_gb >= 0.0 else "Available"
 
-    engine_badge = f"{Fore.CYAN}16x TURBO (ARIA2C){Style.RESET_ALL}" if ARIA2C_EXE.exists() else f"{Fore.GREEN}NATIVE YT-DLP{Style.RESET_ALL}"
+    rust_tag = " + RUST" if is_rust_enabled() else ""
+    engine_badge = (
+        f"{Fore.CYAN}16x TURBO (ARIA2C{rust_tag}){Style.RESET_ALL}"
+        if ARIA2C_EXE.exists()
+        else f"{Fore.GREEN}NATIVE YT-DLP{rust_tag}{Style.RESET_ALL}"
+    )
     active_site = getattr(state, "last_seen_website", None) or state.config.get("default_stream_referer", "https://movy.sx/")
     workers_cnt = state.config.get("max_concurrent_downloads", 2)
 
@@ -107,6 +113,7 @@ def print_help(topic: Optional[str] = None) -> None:
     {Fore.CYAN}help queue{Style.RESET_ALL}     : Queue inspection, cancel (e.g. 'cancel 1', 'cancel all'), workers
     {Fore.CYAN}help media{Style.RESET_ALL}     : Open folder, play video ('play 1'), reveal in explorer, retry
     {Fore.CYAN}help watermark{Style.RESET_ALL} : Clean no-watermark downloads (TikTok, Douyin, CapCut), web sniffer, delogo
+    {Fore.CYAN}help ranking{Style.RESET_ALL}   : YouTube automation ranking downloads (<number>.mp4 to E:\\YTAutomationFiles\\src)
     {Fore.CYAN}help subscriptions{Style.RESET_ALL}: Channel subscriptions, auto-download new videos
     {Fore.CYAN}help webhooks{Style.RESET_ALL}  : Discord & generic HTTP notification webhooks
     {Fore.CYAN}help batch{Style.RESET_ALL}     : Bulk URL text file imports
@@ -115,6 +122,8 @@ def print_help(topic: Optional[str] = None) -> None:
 
   {Fore.YELLOW}COMMON QUICK COMMANDS:{Style.RESET_ALL}
     {Fore.CYAN}[URL]{Style.RESET_ALL}                   : Instant download (auto-detected quality or picker)
+    {Fore.CYAN}rank <# | URL>{Style.RESET_ALL}            : YT Automation: download clean clip as <#>.mp4 to E:\\YTAutomationFiles\\src
+    {Fore.CYAN}<number> (e.g. 6){Style.RESET_ALL}         : Quick rank: type number to auto-download clipboard link
     {Fore.CYAN}nowm [URL]{Style.RESET_ALL}              : Download clean unwatermarked video directly
     {Fore.CYAN}sniff [URL]{Style.RESET_ALL}             : Sniff webpage for hidden embedded video streams
     {Fore.CYAN}clean <1..N | file>{Style.RESET_ALL}     : Remove corner watermark (delogo) or crop banner
@@ -195,6 +204,15 @@ def print_help(topic: Optional[str] = None) -> None:
   {Fore.CYAN}clean <1..N> delogo{Style.RESET_ALL}      : Interpolate/blur corner watermark logo via FFmpeg
   {Fore.CYAN}clean <1..N> crop{Style.RESET_ALL}        : Crop away bottom watermark banner strip (e.g. 60px)
 """)
+    elif t in ("ranking", "rank", "automation"):
+        print(f"""
+{Fore.CYAN}═══ 🎬 YOUTUBE AUTOMATION RANKING WORKFLOW ═══{Style.RESET_ALL}
+  {Fore.CYAN}rank <# | URL>{Style.RESET_ALL}             : Download clean unwatermarked video as <#>.mp4
+  {Fore.CYAN}<number> (e.g. 6){Style.RESET_ALL}          : Quick rank: type number directly at prompt to grab clipboard URL
+  {Fore.CYAN}rank{Style.RESET_ALL}                       : Auto-detect next incremental slot (e.g. #6) and clipboard URL
+  {Fore.CYAN}rank dir [path]{Style.RESET_ALL}              : View or change destination folder (default: E:\\YTAutomationFiles\\src)
+  {Fore.CYAN}rank list{Style.RESET_ALL}                  : List all existing ranked video clips in the target folder
+""")
     elif t in ("settings", "config"):
         print(f"""
 {Fore.CYAN}═══ SETTINGS & PREFERENCES ═══{Style.RESET_ALL}
@@ -205,6 +223,7 @@ def print_help(topic: Optional[str] = None) -> None:
   {Fore.CYAN}sb [on/off]{Style.RESET_ALL}                : Toggle SponsorBlock (auto-skip sponsor segments)
   {Fore.CYAN}cookies <browser>{Style.RESET_ALL}         : Set browser cookies (chrome, edge, firefox, brave, off)
   {Fore.CYAN}limit <rate>{Style.RESET_ALL}              : Set speed limit (e.g. {Fore.YELLOW}limit 5M{Style.RESET_ALL} or {Fore.YELLOW}limit off{Style.RESET_ALL})
+  {Fore.CYAN}rust [status|bench|on|off]{Style.RESET_ALL}: Inspect, live-benchmark, or toggle the Native Rust Core
   {Fore.CYAN}dir{Style.RESET_ALL}                        : Change download destination folder
   {Fore.CYAN}update{Style.RESET_ALL} / {Fore.CYAN}u{Style.RESET_ALL}                : Update yt-dlp to the latest version
 """)
@@ -308,6 +327,9 @@ def format_linux_bar(title: str, pct: float, d_str: str, t_str: str, spd: str, e
             saved = d_str
         return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.GREEN}[✓] COMPLETE — {saved or 'saved'}{Style.RESET_ALL}\033[K"
 
+    if status == "SKIPPED":
+        return f"\r{Fore.CYAN}{_short_title(title, 40)}:{Style.RESET_ALL} {Fore.YELLOW}[SKIP] Already in download archive — nothing new downloaded{Style.RESET_ALL}\033[K"
+
     pct = max(0.0, min(100.0, pct))
     spd = spd.strip() if spd and spd != "NA" else "--"
     eta = eta.strip() if eta and eta != "NA" else "--:--"
@@ -343,6 +365,7 @@ def job_label(job: DownloadJob) -> str:
 
 def format_job_progress(job: DownloadJob) -> str:
     """Single status line for an active job (used by the live status region)."""
+    status = "SKIPPED" if (job.was_archive_skipped and job.status == "COMPLETED") else job.status
     return format_linux_bar(
         job_label(job),
         job.progress_pct,
@@ -351,7 +374,7 @@ def format_job_progress(job: DownloadJob) -> str:
         job.speed_str,
         job.eta_str,
         job.fragment_str,
-        status=job.status,
+        status=status,
     ).replace("\r", "").replace("\033[K", "")
 
 
@@ -363,6 +386,8 @@ def format_job_started(job: DownloadJob, preset_name: str = "") -> str:
 def format_job_result(job: DownloadJob, success: bool) -> str:
     """Permanent one-line summary written when a job leaves the queue."""
     name = _short_title(job.saved_filename or job_label(job), 60)
+    if success and job.was_archive_skipped:
+        return f"{Fore.YELLOW}[↷] Skipped{Style.RESET_ALL} {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {name}{Fore.LIGHTBLACK_EX} (already in archive){Style.RESET_ALL}"
     if success:
         size = f" ({job.saved_filesize_str})" if job.saved_filesize_str else ""
         return f"{Fore.GREEN}[✓] Done{Style.RESET_ALL}    {Fore.CYAN}[{job.id}]{Style.RESET_ALL} {name}{Fore.LIGHTBLACK_EX}{size}{Style.RESET_ALL}"

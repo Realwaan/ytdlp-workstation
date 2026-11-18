@@ -220,3 +220,90 @@ def test_fragment_merger_stitches_and_cleans_up(tmp_path):
     assert ("DOWNLOADING", "2/2") in progress_updates
 
 
+def test_find_fragment_groups_ignores_fragments_claimed_by_other_jobs(tmp_path):
+    from ytdlp_workstation.engine import fragment_registry
+    from ytdlp_workstation.engine.fragment_merger import find_fragment_groups
+
+    base_a = "movie_a.mp4"
+    base_b = "movie_b.mp4"
+    (tmp_path / f"{base_a}-Frag1").write_bytes(b"A1")
+    (tmp_path / f"{base_b}-Frag1").write_bytes(b"B1")
+
+    fragment_registry.claim("job-b", str(tmp_path / base_b))
+    try:
+        groups_a = find_fragment_groups(tmp_path, for_job="job-a")
+        assert base_a in groups_a
+        assert base_b not in groups_a
+
+        groups_b = find_fragment_groups(tmp_path, for_job="job-b")
+        assert base_b in groups_b
+    finally:
+        fragment_registry.release("job-b")
+
+
+def test_subprocess_merger_line_sets_final_filename(tmp_path):
+    """[Merger] output is the post-merge final file — must land in saved_filename."""
+    job = DownloadJob(url="https://www.youtube.com/watch?v=123")
+    config = make_config(download_dir=str(tmp_path))
+
+    lines = [
+        "[download] Destination: /path/to/video.f137.mp4",
+        '[Merger] Merging formats into "My Video [abc123].mkv"',
+    ]
+    fake_proc = _FakeProc(lines=lines, returncode=0)
+
+    with patch(
+        "ytdlp_workstation.engine.subprocess_engine.subprocess.Popen",
+        return_value=fake_proc,
+    ), patch(
+        "ytdlp_workstation.engine.subprocess_engine.SUPERVISOR.register",
+    ):
+        result = run_subprocess_download(job, config)
+
+    assert result is True
+    assert job.status == "COMPLETED"
+    assert job.saved_filename == "My Video [abc123].mkv"
+    assert job.output_path.endswith("My Video [abc123].mkv")
+
+
+def test_subprocess_extract_audio_sets_final_filename(tmp_path):
+    job = DownloadJob(url="https://www.youtube.com/watch?v=123")
+    config = make_config(download_dir=str(tmp_path))
+
+    lines = [
+        "[ExtractAudio] Destination: /path/to/song.mp3",
+    ]
+    fake_proc = _FakeProc(lines=lines, returncode=0)
+
+    with patch(
+        "ytdlp_workstation.engine.subprocess_engine.subprocess.Popen",
+        return_value=fake_proc,
+    ), patch(
+        "ytdlp_workstation.engine.subprocess_engine.SUPERVISOR.register",
+    ):
+        result = run_subprocess_download(job, config)
+
+    assert result is True
+    assert job.saved_filename == "song.mp3"
+
+
+def test_subprocess_archive_skip_sets_flag(tmp_path):
+    job = DownloadJob(url="https://www.youtube.com/watch?v=123")
+    config = make_config(download_dir=str(tmp_path))
+
+    lines = ["[download] My Video has already been recorded in the archive"]
+    fake_proc = _FakeProc(lines=lines, returncode=0)
+
+    with patch(
+        "ytdlp_workstation.engine.subprocess_engine.subprocess.Popen",
+        return_value=fake_proc,
+    ), patch(
+        "ytdlp_workstation.engine.subprocess_engine.SUPERVISOR.register",
+    ):
+        result = run_subprocess_download(job, config)
+
+    assert result is True
+    assert job.status == "COMPLETED"
+    assert job.was_archive_skipped is True
+
+

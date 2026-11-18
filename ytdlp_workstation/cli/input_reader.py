@@ -39,7 +39,7 @@ except ImportError:
     HAS_MSVCRT = False
 
 from ..core.state import AppState, DownloadJob, resolve_state
-from ..core.config import YTDLP_EXE, FFMPEG_EXE
+from ..core.config import YTDLP_EXE, FFMPEG_EXE, get_ytdlp_cli_prefix
 from ..core.presets import PRESETS
 from . import inbox
 from .console import CONSOLE
@@ -391,7 +391,7 @@ def inspect_and_pick_formats(url: str, referer: Optional[str] = None, state: Opt
     """Run yt-dlp -F to show all formats and let the user pick exact format codes."""
     state = resolve_state(state)
     print(f"\n{Fore.CYAN}[*] Fetching available formats from video...{Style.RESET_ALL}\n")
-    cmd = [str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "--no-warnings"]
+    cmd = [*get_ytdlp_cli_prefix(), "--no-warnings"]
     if FFMPEG_EXE.exists():
         cmd.extend(["--ffmpeg-location", str(FFMPEG_EXE.parent)])
     if state.config.get("browser_cookies", "none") != "none":

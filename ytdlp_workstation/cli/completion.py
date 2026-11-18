@@ -69,11 +69,13 @@ TOP_LEVEL_COMMANDS: List[str] = [
     "sub",
     "webhook",
     "batch",
+    "rank",
     "norm",
     "lyrics",
     "lrc",
     "dashboard",
     "web",
+    "rust",
     # Quality shortcuts
     "1080p",
     "720p",
@@ -98,12 +100,15 @@ SUBCOMMAND_MAP: Dict[str, List[str]] = {
     "clean": ["delogo", "crop"],
     "sub": ["list", "add", "remove", "toggle", "check"],
     "webhook": ["list", "add", "remove", "test"],
+    "batch": [],
+    "rank": ["list", "dir", "status"],
     "norm": ["on", "off", "toggle"],
     "lyrics": ["on", "off", "toggle"],
     "lrc": ["on", "off", "toggle"],
     "sb": ["on", "off"],
     "cookies": ["chrome", "edge", "firefox", "brave", "off"],
     "cancel": ["all"],
+    "rust": ["status", "bench", "on", "off", "toggle", "hls"],
 }
 
 

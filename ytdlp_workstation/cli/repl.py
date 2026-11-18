@@ -41,8 +41,11 @@ def check_for_updates_background(state: Optional[AppState] = None):
 
     def _check():
         try:
-            cmd = [str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "--version"]
-            cur_ver = subprocess_check_output(cmd)
+            try:
+                from yt_dlp.version import __version__ as cur_ver
+            except Exception:
+                cmd = [str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"), "--version"]
+                cur_ver = subprocess_check_output(cmd)
             import json
             import urllib.request
             req = urllib.request.Request(

@@ -63,6 +63,7 @@ def main(state: Optional[AppState] = None):
             else:
                 CONSOLE.clear_status("__aggregate__")
         else:
+            render_status = "SKIPPED" if (job.was_archive_skipped and job.status == "COMPLETED") else job.status
             bar_text = format_linux_bar(
                 job.display_title or job.saved_filename or job.url,
                 job.progress_pct,
@@ -71,7 +72,7 @@ def main(state: Optional[AppState] = None):
                 job.speed_str,
                 job.eta_str,
                 job.fragment_str,
-                status=job.status,
+                status=render_status,
             )
             sys.stdout.write(bar_text)
             sys.stdout.flush()

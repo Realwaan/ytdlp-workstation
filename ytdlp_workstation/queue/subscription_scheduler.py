@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from ..core.state import DownloadJob, AppState, resolve_state
-from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR
+from ..core.config import YTDLP_EXE, DEFAULT_DOWNLOAD_DIR, get_ytdlp_cli_prefix
 from ..core.database import DB, DatabaseEngine
 from ..core.events import BUS, EventType
 from .manager import QueueManager
@@ -108,7 +108,7 @@ class SubscriptionScheduler:
             return 0
 
         cmd = [
-            str(YTDLP_EXE if YTDLP_EXE.exists() else "yt-dlp"),
+            *get_ytdlp_cli_prefix(),
             "--flat-playlist",
             "--dump-json",
             "--playlist-end", str(max_entries),

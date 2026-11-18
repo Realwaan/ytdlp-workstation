@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Optional
+from typing import List, Optional
+
+from ..engine.rust_accel import is_rust_enabled, rust_core
 
 __all__ = [
     "is_valid_media_url",
     "extract_media_url",
     "clean_url",
+    "clean_urls_batch",
+    "filter_valid_media_urls_batch",
     "COMMON_MEDIA_DOMAINS",
     "MEDIA_REGEX",
     "MEDIA_EXT_REGEX",
@@ -125,6 +129,8 @@ def is_valid_media_url(text: str, media_filter_only: bool = True) -> bool:
     """Validate if the string is a downloadable media URL."""
     if not text or not isinstance(text, str):
         return False
+    if is_rust_enabled() and rust_core is not None and hasattr(rust_core, "is_valid_media_url"):
+        return bool(rust_core.is_valid_media_url(text, bool(media_filter_only)))
     text = text.strip()
     if media_filter_only:
         return bool(MEDIA_REGEX.search(text) or MEDIA_EXT_REGEX.search(text))
@@ -135,6 +141,8 @@ def extract_media_url(text: str) -> Optional[str]:
     """Extract first matching URL from text string."""
     if not text or not isinstance(text, str):
         return None
+    if is_rust_enabled() and rust_core is not None and hasattr(rust_core, "extract_media_url"):
+        return rust_core.extract_media_url(text)
     match = MEDIA_REGEX.search(text)
     if match:
         return match.group(0)
@@ -151,6 +159,9 @@ def clean_url(url: str) -> str:
     """Strip marketing tracking parameters (utm_*, si, feature, fbclid, etc.) from URLs."""
     if not url or not isinstance(url, str):
         return ""
+    if is_rust_enabled() and rust_core is not None:
+        return str(rust_core.clean_url(url))
+
     url = url.strip()
     try:
         parts = urllib.parse.urlsplit(url)
@@ -171,4 +182,37 @@ def clean_url(url: str) -> str:
         return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
     except Exception:
         return url
+
+
+def clean_urls_batch(urls: List[str]) -> List[str]:
+    """Strip marketing tracking parameters from a batch of URLs outside the GIL when Rust is enabled."""
+    if not urls:
+        return []
+    if is_rust_enabled() and rust_core is not None:
+        return list(rust_core.clean_urls_batch([u if isinstance(u, str) else "" for u in urls]))
+    return [clean_url(u) for u in urls]
+
+
+def filter_valid_media_urls_batch(lines: List[str], media_filter_only: bool = False) -> List[str]:
+    """Clean, strip comments, and validate a batch of raw lines into ready-to-enqueue URLs."""
+    if not lines:
+        return []
+    if is_rust_enabled() and rust_core is not None and hasattr(rust_core, "filter_valid_media_urls_batch"):
+        return list(
+            rust_core.filter_valid_media_urls_batch(
+                [ln if isinstance(ln, str) else "" for ln in lines],
+                bool(media_filter_only),
+            )
+        )
+    out: List[str] = []
+    for raw in lines:
+        if not isinstance(raw, str):
+            continue
+        s = raw.strip()
+        if not s or s.startswith("#"):
+            continue
+        c = clean_url(s)
+        if is_valid_media_url(c, media_filter_only=media_filter_only):
+            out.append(c)
+    return out
 

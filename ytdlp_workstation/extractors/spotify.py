@@ -15,9 +15,19 @@ import json
 import subprocess
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from ..core.config import BASE_DIR, FFMPEG_EXE
+from ..engine.rust_accel import is_rust_enabled, rust_core
+
+
+def _is_urlopen_unpatched() -> bool:
+    fn = urllib.request.urlopen
+    return (
+        getattr(fn, "__module__", "") == "urllib.request"
+        and getattr(fn, "__name__", "") == "urlopen"
+    )
 
 
 def is_spotify_url(url: str) -> bool:
@@ -38,12 +48,15 @@ def resolve_spotify_url(url: str) -> Optional[Dict[str, Any]]:
 
     # Follow redirects for short links (e.g. spotify.link)
     if "spotify.link" in url:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=8) as r:
-                url = r.geturl()
-        except Exception:
-            pass
+        if is_rust_enabled() and rust_core is not None and _is_urlopen_unpatched() and hasattr(rust_core, "follow_redirects"):
+            url = str(rust_core.follow_redirects(url, 8.0))
+        else:
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    url = r.geturl()
+            except Exception:
+                pass
 
     # Extract media type and ID from URL
     m = re.search(r"spotify\.com/(intl-[a-zA-Z0-9_-]+/)?(track|album|playlist)/([a-zA-Z0-9]+)", url)
@@ -55,31 +68,62 @@ def resolve_spotify_url(url: str) -> Optional[Dict[str, Any]]:
     embed_url = f"https://open.spotify.com/embed/{entity_type}/{entity_id}"
     oembed_url = f"https://open.spotify.com/oembed?url={urllib.parse.quote(url)}"
 
-    thumbnail = ""
-    oembed_title = ""
-    try:
-        req_oe = urllib.request.Request(oembed_url, headers=headers)
-        with urllib.request.urlopen(req_oe, timeout=6) as resp:
-            oe_data = json.loads(resp.read().decode("utf-8", errors="replace"))
-            thumbnail = oe_data.get("thumbnail_url", "")
-            # Upgrade thumbnail to 640x640 high resolution
-            if "ab67616d00001e02" in thumbnail:
-                thumbnail = thumbnail.replace("ab67616d00001e02", "ab67616d0000b273")
-            oembed_title = oe_data.get("title", "")
-    except Exception:
-        pass
+    def _fetch_oembed() -> Tuple[str, str]:
+        try:
+            req_oe = urllib.request.Request(oembed_url, headers=headers)
+            with urllib.request.urlopen(req_oe, timeout=6) as resp:
+                oe_data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                thumb = oe_data.get("thumbnail_url", "")
+                # Upgrade thumbnail to 640x640 high resolution
+                if "ab67616d00001e02" in thumb:
+                    thumb = thumb.replace("ab67616d00001e02", "ab67616d0000b273")
+                return thumb, oe_data.get("title", "")
+        except Exception:
+            return "", ""
 
-    entity: Dict[str, Any] = {}
-    try:
-        req_emb = urllib.request.Request(embed_url, headers=headers)
-        with urllib.request.urlopen(req_emb, timeout=8) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-            nd_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
-            if nd_match:
-                d = json.loads(nd_match.group(1))
-                entity = d.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
-    except Exception:
-        pass
+    def _fetch_embed() -> Dict[str, Any]:
+        try:
+            req_emb = urllib.request.Request(embed_url, headers=headers)
+            with urllib.request.urlopen(req_emb, timeout=8) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+                nd_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
+                if nd_match:
+                    d = json.loads(nd_match.group(1))
+                    return d.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+        except Exception:
+            pass
+        return {}
+
+    if is_rust_enabled() and rust_core is not None and _is_urlopen_unpatched() and hasattr(rust_core, "fetch_urls_parallel"):
+        responses = rust_core.fetch_urls_parallel(
+            [(oembed_url, dict(headers)), (embed_url, dict(headers))],
+            8.0,
+        )
+        thumbnail, oembed_title = "", ""
+        entity: Dict[str, Any] = {}
+        if len(responses) >= 1 and responses[0] is not None and 200 <= responses[0][0] < 300:
+            try:
+                oe_data = json.loads(responses[0][2])
+                thumb = oe_data.get("thumbnail_url", "")
+                if "ab67616d00001e02" in thumb:
+                    thumb = thumb.replace("ab67616d00001e02", "ab67616d0000b273")
+                thumbnail, oembed_title = thumb, oe_data.get("title", "")
+            except Exception:
+                pass
+        if len(responses) >= 2 and responses[1] is not None and 200 <= responses[1][0] < 300:
+            try:
+                nd_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', responses[1][2])
+                if nd_match:
+                    d = json.loads(nd_match.group(1))
+                    entity = d.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+            except Exception:
+                pass
+    else:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            oe_fut = pool.submit(_fetch_oembed)
+            emb_fut = pool.submit(_fetch_embed)
+            thumbnail, oembed_title = oe_fut.result()
+            entity = emb_fut.result()
 
     res: Dict[str, Any] = {
         "type": entity_type,
